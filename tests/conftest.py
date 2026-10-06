@@ -1,0 +1,235 @@
+import copy
+import json
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+from searchbar.app import create_app
+from searchbar.config import Settings
+from searchbar.db import Base, GuestCode, Profile, User, now
+from searchbar.schemas import Rules
+from searchbar.security import digest
+
+CATALOG = {
+    "storage_paths": [{"id": 1, "name": "Buchhaltung"}, {"id": 2, "name": "Privat"}],
+    "correspondents": [{"id": 1, "name": "Firma A"}, {"id": 2, "name": "Firma B"}],
+    "custom_fields": [
+        {"id": 1, "name": "Mandant", "data_type": "string"},
+        {"id": 2, "name": "Betrag", "data_type": "monetary"},
+        {"id": 3, "name": "Bezahlt", "data_type": "boolean"},
+        {"id": 4, "name": "Termin", "data_type": "date"},
+        {
+            "id": 5,
+            "name": "Kategorie",
+            "data_type": "select",
+            "extra_data": {
+                "select_options": [
+                    {"id": "a", "label": "Allgemein"},
+                    {"id": "b", "label": "Vertraulich"},
+                ]
+            },
+        },
+        {"id": 6, "name": "Verweise", "data_type": "documentlink"},
+        {"id": 7, "name": "Anzahl", "data_type": "integer"},
+        {"id": 8, "name": "Faktor", "data_type": "float"},
+        {"id": 9, "name": "Website", "data_type": "url"},
+        {"id": 10, "name": "Beschreibung", "data_type": "longtext"},
+    ],
+}
+DOCS = [
+    {
+        "id": 101,
+        "title": "Rechnung Firma A",
+        "created": "2026-10-01",
+        "storage_path": 1,
+        "correspondent": 1,
+        "content": "PRIVATE OCR NOT FOR API",
+        "custom_fields": [
+            {"field": 1, "value": "A"},
+            {"field": 2, "value": "120.00"},
+            {"field": 3, "value": True},
+            {"field": 5, "value": "a"},
+        ],
+    },
+    {
+        "id": 202,
+        "title": "Geheimer Vertrag",
+        "created": "2026-10-02",
+        "storage_path": 2,
+        "correspondent": 2,
+        "custom_fields": [{"field": 1, "value": "B"}, {"field": 5, "value": "b"}],
+    },
+    {
+        "id": 303,
+        "title": "Anderer Mandant",
+        "storage_path": 1,
+        "correspondent": 1,
+        "custom_fields": [{"field": 1, "value": "B"}],
+    },
+]
+
+
+def matches(expression, document):
+    if expression[0] == "AND":
+        return all(matches(e, document) for e in expression[1])
+    if expression[0] == "OR":
+        return any(matches(e, document) for e in expression[1])
+    identity, op, expected = expression
+    fields = {v["field"]: v["value"] for v in document["custom_fields"]}
+    value = fields.get(identity)
+    if op == "exists":
+        return (identity in fields) == expected
+    if op == "isnull":
+        return identity in fields and (value is None) == expected
+    if op == "exact":
+        return identity in fields and value == expected
+    if op == "in":
+        return value in expected
+    if op == "icontains":
+        return value is not None and str(expected).lower() in str(value).lower()
+    if op == "contains":
+        return value is not None and all(v in value for v in expected)
+    if op == "range":
+        return value is not None and expected[0] <= value <= expected[1]
+    raise AssertionError(op)
+
+
+def example_pdf():
+    content = b"BT /F1 22 Tf 70 740 Td (Rechnung Firma A) Tj 0 -40 Td /F1 12 Tf (Betrag: 120,00 EUR) Tj ET"
+    objects = [
+        b"<</Type /Catalog /Pages 2 0 R>>",
+        b"<</Type /Pages /Kids [3 0 R] /Count 1>>",
+        b"<</Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources <</Font <</F1 4 0 R>>>> /Contents 5 0 R>>",
+        b"<</Type /Font /Subtype /Type1 /BaseFont /Helvetica>>",
+        b"<</Length " + str(len(content)).encode() + b">>\nstream\n" + content + b"\nendstream",
+    ]
+    output = b"%PDF-1.4\n"
+    offsets = [0]
+    for i, obj in enumerate(objects, 1):
+        offsets.append(len(output))
+        output += str(i).encode() + b" 0 obj\n" + obj + b"\nendobj\n"
+    xref = len(output)
+    output += b"xref\n0 6\n0000000000 65535 f \n"
+    for offset in offsets[1:]:
+        output += f"{offset:010d} 00000 n \n".encode()
+    output += f"trailer\n<</Size 6 /Root 1 0 R>>\nstartxref\n{xref}\n%%EOF".encode()
+    return output
+
+
+class FakePaperless:
+    def __init__(self):
+        self.calls = []
+        self.catalog = copy.deepcopy(CATALOG)
+        self.docs = copy.deepcopy(DOCS)
+        self.error = None
+
+    def handle(self, request):
+        self.calls.append(request)
+        assert request.method == "GET", "Paperless must remain read-only"
+        assert request.headers["authorization"] == "Token test-token"
+        if self.error:
+            return httpx.Response(self.error)
+        resource = request.url.path.removeprefix("/api/").strip("/")
+        if resource in self.catalog:
+            return httpx.Response(
+                200,
+                json={
+                    "count": len(self.catalog[resource]),
+                    "next": None,
+                    "results": self.catalog[resource],
+                },
+            )
+        if resource == "documents":
+            docs = self.docs[:]
+            for param, field in [
+                ("id__in", "id"),
+                ("storage_path__id__in", "storage_path"),
+                ("correspondent__id__in", "correspondent"),
+            ]:
+                if param in request.url.params:
+                    ids = [int(i) for i in request.url.params[param].split(",")]
+                    docs = [d for d in docs if d[field] in ids]
+            if "custom_field_query" in request.url.params:
+                expression = json.loads(request.url.params["custom_field_query"])
+                docs = [d for d in docs if matches(expression, d)]
+            docs.sort(key=lambda d: d["id"], reverse=True)
+            size = int(request.url.params.get("page_size", 25))
+            start = (int(request.url.params.get("page", 1)) - 1) * size
+            return httpx.Response(
+                200, json={"count": len(docs), "next": None, "results": docs[start : start + size]}
+            )
+        if resource.endswith(("/preview", "/download")):
+            content = example_pdf()
+            headers = {"Content-Type": "application/pdf", "Accept-Ranges": "bytes"}
+            if request.headers.get("range") == "bytes=0-0":
+                headers.update(
+                    {"Content-Range": f"bytes 0-0/{len(content)}", "Content-Length": "1"}
+                )
+                return httpx.Response(206, stream=httpx.ByteStream(content[:1]), headers=headers)
+            return httpx.Response(200, stream=httpx.ByteStream(content), headers=headers)
+        return httpx.Response(404)
+
+
+@pytest.fixture
+def env(tmp_path):
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'app.db'}",
+        app_url="http://testserver",
+        paperless_url="http://paperless.test",
+        paperless_public_url="https://docs.example",
+        paperless_token="test-token",
+        secret_key="test-secret-" * 4,
+        oidc_issuer="https://idp.test",
+        oidc_client_id="searchbar",
+        oidc_client_secret="oidc-test",
+    )
+    app = create_app(settings)
+    Base.metadata.create_all(app.state.engine)
+    fake = FakePaperless()
+    app.state.paperless.http = httpx.AsyncClient(
+        base_url="http://paperless.test/api/",
+        headers={"Authorization": "Token test-token"},
+        transport=httpx.MockTransport(fake.handle),
+    )
+    with app.state.db() as db:
+        profile = Profile(
+            name="Firma A",
+            rules=Rules(
+                storage_paths=[1], custom_fields=[{"field": 1, "op": "exact", "value": "A"}]
+            ).model_dump(),
+        )
+        db.add(profile)
+        db.flush()
+        db.add(
+            User(
+                name="Admin",
+                username="admin",
+                local_code_digest=digest(settings, "admin-code"),
+                is_admin=True,
+                active=True,
+            )
+        )
+        db.add(
+            GuestCode(
+                name="Gast A",
+                digest=digest(settings, "guest-code"),
+                profile_id=profile.id,
+                expires_at=now() + 3600,
+            )
+        )
+        db.commit()
+    with TestClient(app) as client:
+        yield app, client, fake
+
+
+def login(client, admin=False):
+    data = client.get("/api/auth/session").json()
+    response = client.post(
+        "/api/auth/code",
+        json={"code": "admin-code" if admin else "guest-code"},
+        headers={"X-CSRF-Token": data["csrf"]},
+    )
+    assert response.status_code == 200, response.text
+    data = client.get("/api/auth/session").json()
+    client.headers["X-CSRF-Token"] = data["csrf"]
+    return data

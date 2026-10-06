@@ -1,0 +1,18 @@
+# Usage: docker compose -f compose.yaml -f compose.traefik.yaml up -d
+# Requires Docker Compose with !reset support and an existing Traefik network.
+services:
+  searchbar:
+    ports: !reset []
+    networks:
+      - proxy
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "${TRAEFIK_NETWORK:-proxy}"
+      traefik.http.routers.searchbar.rule: "Host(`${SEARCHBAR_HOST:?set SEARCHBAR_HOST}`)"
+      traefik.http.routers.searchbar.entrypoints: websecure
+      traefik.http.routers.searchbar.tls: "true"
+      traefik.http.services.searchbar.loadbalancer.server.port: "8000"
+networks:
+  proxy:
+    external: true
+    name: ${TRAEFIK_NETWORK:-proxy}

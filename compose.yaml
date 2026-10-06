@@ -1,0 +1,19 @@
+services:
+  searchbar:
+    image: ghcr.io/david-loe/paperless-searchbar:${SEARCHBAR_TAG:-latest}
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:4300:8000"
+    volumes:
+      - searchbar_data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+volumes:
+  searchbar_data:
