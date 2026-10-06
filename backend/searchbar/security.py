@@ -99,6 +99,7 @@ class Principal:
     profile_id: int | None
     csrf: str
     user_id: int | None = None
+    allow_download: bool = False
 
 
 def principal(request: Request) -> Principal:
@@ -116,11 +117,20 @@ def principal(request: Request) -> Principal:
                     or not hmac.compare_digest(row.local_code_digest, user.local_code_digest)
                 ):
                     raise HTTPException(401, "Sitzung abgelaufen oder Zugang gesperrt.")
-                return Principal(user.name, user.is_admin, user.profile_id, row.csrf, user.id)
+                return Principal(
+                    user.name,
+                    user.is_admin,
+                    user.profile_id,
+                    row.csrf,
+                    user.id,
+                    allow_download=user.allow_download,
+                )
         elif row.code_id:
             code = db.get(GuestCode, row.code_id)
             if code and not code.revoked and code.expires_at > now():
-                return Principal(code.name, False, code.profile_id, row.csrf)
+                return Principal(
+                    code.name, False, code.profile_id, row.csrf, allow_download=code.allow_download
+                )
     raise HTTPException(401, "Sitzung abgelaufen oder Zugang gesperrt.")
 
 

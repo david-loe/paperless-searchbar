@@ -15,6 +15,7 @@ export interface CustomField extends Choice {
 export interface Catalog {
   storage_paths: Choice[];
   correspondents: Choice[];
+  document_types: Choice[];
   custom_fields: CustomField[];
 }
 export interface SearchSettings {
@@ -39,10 +40,12 @@ export interface Document {
   created: string | null;
   correspondent: string | null;
   storage_path: string | null;
+  document_type: string | null;
   custom_fields: { field: number; name: string; value: unknown }[];
   paperless_url: string;
 }
 export interface User {
+  allow_download: boolean;
   id: number;
   name: string;
   active: boolean;
@@ -53,6 +56,7 @@ export interface User {
   local: boolean;
 }
 export interface Code {
+  allow_download: boolean;
   id: number;
   name: string;
   profile_id: number;
@@ -65,6 +69,7 @@ export interface Session {
   name?: string;
   is_admin?: boolean;
   has_access?: boolean;
+  allow_download?: boolean;
   oidc_enabled: boolean;
 }
 export const emptyRules = (): Rules => ({
@@ -75,6 +80,7 @@ export const emptyRules = (): Rules => ({
   custom_fields: [],
 });
 export const emptyCatalog = (): Catalog => ({
+  document_types: [],
   storage_paths: [],
   correspondents: [],
   custom_fields: [],

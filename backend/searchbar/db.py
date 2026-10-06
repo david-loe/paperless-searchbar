@@ -41,6 +41,7 @@ class User(Base):
     subject: Mapped[str | None] = mapped_column(String)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    allow_download: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     profile_id: Mapped[int | None] = mapped_column(ForeignKey("profiles.id", ondelete="SET NULL"))
 
 
@@ -52,6 +53,7 @@ class GuestCode(Base):
     profile_id: Mapped[int] = mapped_column(ForeignKey("profiles.id", ondelete="RESTRICT"))
     expires_at: Mapped[int] = mapped_column(Integer)
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_download: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
 
 class BrowserSession(Base):

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
 import { useRoute } from "vue-router";
-import { api, errorMessage } from "../api";
+import { api, errorMessage, session } from "../api";
 import type { Document } from "../types";
 import PdfPreview from "../components/PdfPreview.vue";
+import { displayValue as display, displayDate } from "../format";
 const id = String(useRoute().params.id),
   doc = ref<Document | null>(null),
   error = ref(""),
@@ -40,7 +41,7 @@ onMounted(async () => {
       if (r.status === 401 || r.status === 403 || r.status === 404)
         await check();
     } catch {
-      // The download remains available if the preview cannot be loaded.
+      // Show the fallback if the preview cannot be loaded.
     }
   }
   if (!alive) return;
@@ -50,16 +51,6 @@ onUnmounted(() => {
   alive = false;
   clearInterval(timer);
 });
-const display = (value: unknown) =>
-  value === null
-    ? "—"
-    : typeof value === "boolean"
-      ? value
-        ? "Ja"
-        : "Nein"
-      : Array.isArray(value)
-        ? value.join(", ")
-        : String(value);
 </script>
 <template>
   <RouterLink class="back-link" to="/">← Zur Suche</RouterLink>
@@ -72,7 +63,10 @@ const display = (value: unknown) =>
         <h1>{{ doc.title }}</h1>
       </div>
       <div class="actions">
-        <a class="button secondary" :href="`/api/documents/${doc.id}/download`"
+        <a
+          v-if="session?.allow_download"
+          class="button secondary"
+          :href="`/api/documents/${doc.id}/download`"
           >Herunterladen ↓</a
         ><a
           class="button primary"
@@ -88,7 +82,9 @@ const display = (value: unknown) =>
         <h2>Dokumentdetails</h2>
         <dl>
           <dt>Datum</dt>
-          <dd>{{ doc.created?.slice(0, 10) || "—" }}</dd>
+          <dd>{{ displayDate(doc.created) }}</dd>
+          <dt>Dokumenttyp</dt>
+          <dd>{{ doc.document_type || "—" }}</dd>
           <dt>Korrespondent</dt>
           <dd>{{ doc.correspondent || "—" }}</dd>
           <dt>Speicherpfad</dt>
@@ -103,7 +99,9 @@ const display = (value: unknown) =>
         <PdfPreview v-if="preview" :url="preview" />
         <div v-else class="empty">
           <h2>Keine PDF-Vorschau verfügbar</h2>
-          <p>Du kannst die Datei herunterladen und auf deinem Gerät öffnen.</p>
+          <p v-if="session?.allow_download">
+            Du kannst die Datei herunterladen und auf deinem Gerät öffnen.
+          </p>
         </div>
       </div>
     </div></template

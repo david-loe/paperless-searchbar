@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type { CustomField, CustomFilter } from "../types";
+import ChoiceSelect from "./ChoiceSelect.vue";
+import SearchableSelect from "./SearchableSelect.vue";
 const props = defineProps<{ fields: CustomField[] }>();
 const model = defineModel<CustomFilter[]>({ required: true });
 const labels: Record<string, string> = {
@@ -60,11 +62,6 @@ function updateValue(f: CustomFilter, e: Event, index?: number) {
       .map(scalar);
   else f.value = scalar(text);
 }
-function options(f: CustomFilter, event: Event) {
-  f.value = Array.from((event.target as HTMLSelectElement).selectedOptions).map(
-    (o) => o.value,
-  );
-}
 const inputType = (f: CustomFilter) =>
   field(f)?.data_type === "date"
     ? "date"
@@ -76,13 +73,16 @@ const inputType = (f: CustomFilter) =>
   <div class="custom-filters">
     <fieldset v-for="(filter, index) in model" :key="index" class="filter-row">
       <legend>Custom Field {{ index + 1 }}</legend>
-      <label
-        >Feld<select v-model="filter.field" @change="changeField(filter)">
-          <option v-for="f in fields" :key="f.id" :value="f.id">
-            {{ f.name }}
-          </option>
-        </select></label
-      >
+      <ChoiceSelect
+        :model-value="filter.field"
+        label="Feld"
+        :choices="fields"
+        required
+        @update:model-value="
+          filter.field = $event as number;
+          changeField(filter);
+        "
+      />
       <label
         >Bedingung<select v-model="filter.op" @change="initial(filter)">
           <option v-for="op in field(filter)?.operators" :key="op" :value="op">
@@ -112,27 +112,23 @@ const inputType = (f: CustomFilter) =>
             required
             @input="updateValue(filter, $event, 1)" /></label
       ></template>
-      <label
+      <SearchableSelect
         v-else-if="
           filter.op !== 'empty' && field(filter)?.data_type === 'select'
         "
-        >Wert<select
-          v-if="filter.op === 'in'"
-          multiple
-          :value="filter.value"
-          required
-          @change="options(filter, $event)"
-        >
-          <option v-for="o in field(filter)?.options" :key="o.id" :value="o.id">
-            {{ o.label }}
-          </option></select
-        ><select v-else v-model="filter.value" required>
-          <option value="" disabled>Wählen …</option>
-          <option v-for="o in field(filter)?.options" :key="o.id" :value="o.id">
-            {{ o.label }}
-          </option>
-        </select></label
-      >
+        label="Wert"
+        :choices="
+          (field(filter)?.options ?? []).map((option) => ({
+            id: option.id,
+            name: option.label,
+          }))
+        "
+        :model-value="filter.value as string | string[] | null"
+        :multiple="filter.op === 'in'"
+        required
+        empty-label="Wählen …"
+        @update:model-value="filter.value = $event"
+      />
       <label
         v-else-if="
           filter.op !== 'empty' && field(filter)?.data_type === 'boolean'

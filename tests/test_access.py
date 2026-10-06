@@ -19,7 +19,7 @@ def test_guest_scope_counts_and_direct_access(env):
     assert request.url.params["storage_path__id__in"] == "1"
     assert json.loads(request.url.params["custom_field_query"])[1][0] == [1, "exact", "A"]
     for identity in (202, 303, 999):
-        for suffix in ("", "/preview", "/download"):
+        for suffix in ("", "/preview", "/download", "/thumb"):
             response = client.get(f"/api/documents/{identity}{suffix}")
             assert response.status_code == 404
             assert response.json()["detail"] == "Dokument nicht gefunden."
@@ -99,6 +99,7 @@ def test_existing_session_immediately_loses_access(env, change):
                 s.expires_at = now() - 1
         db.commit()
     assert c.get("/api/documents/101/download").status_code in (401, 404)
+    assert c.get("/api/documents/101/thumb").status_code in (401, 404)
 
 
 def test_deleted_reference_fails_closed_and_admin_sees_error(env):
@@ -112,6 +113,8 @@ def test_deleted_reference_fails_closed_and_admin_sees_error(env):
 
 def test_files_range_and_no_write_proxy(env):
     _, c, _ = env
+    login(c, admin=True)
+    assert c.patch("/api/admin/codes/1", json={"allow_download": True}).status_code == 200
     login(c)
     response = c.get("/api/documents/101/preview", headers={"range": "bytes=0-0"})
     assert response.status_code == 206

@@ -1,5 +1,7 @@
 import copy
 import json
+import struct
+import zlib
 
 import httpx
 import pytest
@@ -13,6 +15,7 @@ from searchbar.security import digest
 CATALOG = {
     "storage_paths": [{"id": 1, "name": "Buchhaltung"}, {"id": 2, "name": "Privat"}],
     "correspondents": [{"id": 1, "name": "Firma A"}, {"id": 2, "name": "Firma B"}],
+    "document_types": [{"id": 1, "name": "Rechnung"}, {"id": 2, "name": "Vertrag"}],
     "custom_fields": [
         {"id": 1, "name": "Mandant", "data_type": "string"},
         {"id": 2, "name": "Betrag", "data_type": "monetary"},
@@ -40,6 +43,7 @@ DOCS = [
     {
         "id": 101,
         "title": "Rechnung Firma A",
+        "document_type": 1,
         "created": "2026-10-01",
         "storage_path": 1,
         "correspondent": 1,
@@ -54,6 +58,7 @@ DOCS = [
     {
         "id": 202,
         "title": "Geheimer Vertrag",
+        "document_type": 2,
         "created": "2026-10-02",
         "storage_path": 2,
         "correspondent": 2,
@@ -116,12 +121,40 @@ def example_pdf():
     return output
 
 
+def example_thumbnail():
+    """Small deterministic PNG document, shared by API and browser fixtures."""
+
+    def chunk(kind, data):
+        return (
+            struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+        )
+
+    rows = bytearray()
+    for y in range(128):
+        rows.append(0)
+        for x in range(96):
+            color = (255, 255, 255)
+            if 10 <= x < 66 and 14 <= y < 23:
+                color = (33, 76, 60)
+            elif 10 <= x < 84 and y in (36, 37, 46, 47, 56, 57, 66, 67, 94, 95):
+                color = (165, 175, 165)
+            rows.extend(color)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 96, 128, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(bytes(rows)))
+        + chunk(b"IEND", b"")
+    )
+
+
 class FakePaperless:
     def __init__(self):
         self.calls = []
         self.catalog = copy.deepcopy(CATALOG)
         self.docs = copy.deepcopy(DOCS)
         self.error = None
+        self.thumbnail_status = 200
+        self.thumbnail_content_type = "image/png"
 
     def handle(self, request):
         self.calls.append(request)
@@ -145,10 +178,11 @@ class FakePaperless:
                 ("id__in", "id"),
                 ("storage_path__id__in", "storage_path"),
                 ("correspondent__id__in", "correspondent"),
+                ("document_type__id__in", "document_type"),
             ]:
                 if param in request.url.params:
                     ids = [int(i) for i in request.url.params[param].split(",")]
-                    docs = [d for d in docs if d[field] in ids]
+                    docs = [d for d in docs if d.get(field) in ids]
             if "custom_field_query" in request.url.params:
                 expression = json.loads(request.url.params["custom_field_query"])
                 docs = [d for d in docs if matches(expression, d)]
@@ -157,6 +191,12 @@ class FakePaperless:
             start = (int(request.url.params.get("page", 1)) - 1) * size
             return httpx.Response(
                 200, json={"count": len(docs), "next": None, "results": docs[start : start + size]}
+            )
+        if resource.endswith("/thumb"):
+            return httpx.Response(
+                self.thumbnail_status,
+                stream=httpx.ByteStream(example_thumbnail()),
+                headers={"Content-Type": self.thumbnail_content_type},
             )
         if resource.endswith(("/preview", "/download")):
             content = example_pdf()

@@ -1,7 +1,8 @@
-import { mount } from "@vue/test-utils";
-import { describe, it, expect } from "vitest";
+import { enableAutoUnmount, mount } from "@vue/test-utils";
+import { afterEach, describe, it, expect } from "vitest";
 import SearchFields from "../src/components/SearchFields.vue";
 import type { CustomField, CustomFilter } from "../src/types";
+enableAutoUnmount(afterEach);
 const fields: CustomField[] = [
   {
     id: 1,
@@ -56,7 +57,8 @@ describe("Direkte Suchfelder", () => {
     const wrapper = form();
     await wrapper.findAll("select")[0]!.setValue("false");
     await wrapper.find('input[type="number"]').setValue("0");
-    await wrapper.findAll("select")[1]!.setValue("a");
+    await wrapper.find('[role="combobox"]').trigger("click");
+    await wrapper.findAll('[role="option"]')[1]!.trigger("click");
     expect(wrapper.props("modelValue")).toEqual([
       { field: 2, op: "exact", value: false },
       { field: 3, op: "exact", value: 0 },

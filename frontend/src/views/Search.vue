@@ -5,11 +5,13 @@ import { api, errorMessage, session } from "../api";
 import { emptyCatalog, type CustomFilter, type Document } from "../types";
 import ChoiceSelect from "../components/ChoiceSelect.vue";
 import SearchFields from "../components/SearchFields.vue";
+import SearchResult from "../components/SearchResult.vue";
 const router = useRouter();
 const catalog = ref(emptyCatalog()),
   documentId = ref(""),
   storagePath = ref<number | number[] | null>(null),
-  correspondent = ref<number | number[] | null>(null);
+  correspondent = ref<number | number[] | null>(null),
+  documentType = ref<number | number[] | null>(null);
 const custom = ref<CustomFilter[]>([]),
   results = ref<Document[]>([]),
   count = ref(0),
@@ -23,6 +25,7 @@ const hasCriteria = computed(() =>
     documentId.value ||
     storagePath.value ||
     correspondent.value ||
+    documentType.value ||
     custom.value.length,
   ),
 );
@@ -48,6 +51,7 @@ async function search(next?: number) {
       document_id: documentId.value ? Number(documentId.value) : null,
       storage_path: storagePath.value,
       correspondent: correspondent.value,
+      document_type: documentType.value,
       custom_fields: JSON.parse(JSON.stringify(custom.value)),
     };
   }
@@ -81,6 +85,7 @@ function reset() {
   documentId.value = "";
   storagePath.value = null;
   correspondent.value = null;
+  documentType.value = null;
   custom.value = [];
   results.value = [];
   count.value = 0;
@@ -142,6 +147,11 @@ function reset() {
             label="Korrespondent"
             :choices="catalog.correspondents"
           />
+          <ChoiceSelect
+            v-model="documentType"
+            label="Dokumenttyp"
+            :choices="catalog.document_types"
+          />
           <SearchFields v-model="custom" :fields="catalog.custom_fields" />
         </fieldset>
         <div class="search-status">
@@ -176,27 +186,12 @@ function reset() {
           }}
         </p>
         <div class="result-list">
-          <RouterLink
+          <SearchResult
             v-for="doc in results"
             :key="doc.id"
-            :to="`/documents/${doc.id}`"
-            class="result-row"
-          >
-            <span class="small muted"
-              >#{{ doc.id
-              }}<template v-if="doc.created">
-                · {{ doc.created.slice(0, 10) }}</template
-              ></span
-            >
-            <h3>{{ doc.title }}</h3>
-            <p>
-              {{
-                [doc.correspondent, doc.storage_path]
-                  .filter(Boolean)
-                  .join(" · ")
-              }}
-            </p>
-          </RouterLink>
+            :document="doc"
+            :fields="catalog.custom_fields"
+          />
         </div>
         <div v-if="count > 25" class="pagination">
           <button

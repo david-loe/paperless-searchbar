@@ -43,6 +43,7 @@ class Search(Input):
     document_id: PositiveID | None = None
     storage_path: PositiveID | None = None
     correspondent: PositiveID | None = None
+    document_type: PositiveID | None = None
     custom_fields: list[CustomFilter] = Field(default_factory=list, max_length=8)
     page: int = Field(default=1, ge=1, le=10000)
     page_size: int = Field(default=25, ge=1, le=100)
@@ -50,7 +51,11 @@ class Search(Input):
     @property
     def has_filter(self):
         return bool(
-            self.document_id or self.storage_path or self.correspondent or self.custom_fields
+            self.document_id
+            or self.storage_path
+            or self.correspondent
+            or self.document_type
+            or self.custom_fields
         )
 
 
@@ -81,12 +86,18 @@ class CodeInput(Input):
     name: str = Field(min_length=1, max_length=120)
     profile_id: PositiveID
     expires_at: int
+    allow_download: bool = Field(default=False, strict=True)
+
+
+class CodeUpdate(Input):
+    allow_download: bool = Field(strict=True)
 
 
 class UserUpdate(Input):
     profile_id: PositiveID | None = None
     active: bool
     is_admin: bool
+    allow_download: bool = Field(default=False, strict=True)
 
 
 class CodeLogin(Input):
@@ -105,6 +116,7 @@ class DocumentResult(BaseModel):
     created: str | None
     correspondent: str | None
     storage_path: str | None
+    document_type: str | None
     custom_fields: list[DocumentField]
     paperless_url: str
 
@@ -133,4 +145,5 @@ class FieldDefinition(Choice):
 class CatalogResponse(BaseModel):
     storage_paths: list[Choice]
     correspondents: list[Choice]
+    document_types: list[Choice]
     custom_fields: list[FieldDefinition]

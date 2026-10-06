@@ -60,12 +60,18 @@ class Paperless:
     async def catalogs(self):
         import asyncio
 
-        paths, people, fields = await asyncio.gather(
+        paths, people, fields, document_types = await asyncio.gather(
             self.catalog("storage_paths"),
             self.catalog("correspondents"),
             self.catalog("custom_fields"),
+            self.catalog("document_types"),
         )
-        return {"storage_paths": paths, "correspondents": people, "custom_fields": fields}
+        return {
+            "storage_paths": paths,
+            "correspondents": people,
+            "custom_fields": fields,
+            "document_types": document_types,
+        }
 
     async def validate_rules(self, rules: Rules, catalogs: dict):
         for key in ("storage_paths", "correspondents"):
@@ -137,6 +143,7 @@ class Paperless:
             "created": d.get("created"),
             "correspondent": label("correspondents", d.get("correspondent")),
             "storage_path": label("storage_paths", d.get("storage_path")),
+            "document_type": label("document_types", d.get("document_type")),
             "custom_fields": custom,
             "paperless_url": f"{self.settings.paperless_public_url}/documents/{d['id']}/",
         }
@@ -224,6 +231,8 @@ def compile_query(search: Search, rules: Rules, fields: list[dict]):
     if not rules.all_documents and not rules.restricted:
         return None
     params = {"page": search.page, "page_size": search.page_size, "ordering": "-id"}
+    if search.document_type is not None:
+        params["document_type__id__in"] = str(search.document_type)
     for attr, selected, upstream in (
         ("document_ids", search.document_id, "id__in"),
         ("storage_paths", search.storage_path, "storage_path__id__in"),

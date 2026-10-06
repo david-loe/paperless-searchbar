@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { api, errorMessage } from "../api";
+import { api, errorMessage, refreshSession } from "../api";
 import {
   emptyCatalog,
   emptyRules,
@@ -36,6 +36,7 @@ const error = ref(""),
   ids = ref("");
 const codeName = ref(""),
   codeProfile = ref<number | null>(null),
+  codeDownload = ref(false),
   duration = ref("86400"),
   expires = ref(""),
   newCode = ref("");
@@ -119,19 +120,19 @@ async function remove(profile: Profile) {
     );
 }
 async function saveUser(user: User) {
-  await action(
-    () =>
-      api(
-        `/admin/users/${user.id}`,
-        {
-          profile_id: user.profile_id,
-          active: user.active,
-          is_admin: user.is_admin,
-        },
-        "PUT",
-      ),
-    "Benutzerrechte gespeichert.",
-  );
+  await action(async () => {
+    await api(
+      `/admin/users/${user.id}`,
+      {
+        profile_id: user.profile_id,
+        active: user.active,
+        is_admin: user.is_admin,
+        allow_download: user.allow_download,
+      },
+      "PUT",
+    );
+    await refreshSession();
+  }, "Benutzerrechte gespeichert.");
 }
 async function createCode() {
   newCode.value = "";
@@ -143,11 +144,29 @@ async function createCode() {
     const result = await api<{ code: string }>("/admin/codes", {
       name: codeName.value,
       profile_id: codeProfile.value,
+      allow_download: codeDownload.value,
       expires_at: expiry,
     });
     newCode.value = result.code;
     codeName.value = "";
+    codeDownload.value = false;
   }, "Zugangscode erstellt.");
+}
+async function saveCodeDownload(code: Code, event: Event) {
+  const input = event.target as HTMLInputElement;
+  const allowDownload = input.checked;
+  const previous = code.allow_download;
+  code.allow_download = allowDownload;
+  await action(
+    () =>
+      api(
+        `/admin/codes/${code.id}`,
+        { allow_download: allowDownload },
+        "PATCH",
+      ),
+    "Download-Einstellung gespeichert.",
+  );
+  if (error.value) code.allow_download = previous;
 }
 async function revoke(code: Code) {
   if (confirm(`Zugang „${code.name}“ sofort widerrufen?`))
@@ -320,14 +339,17 @@ async function copy() {
         </p>
       </div>
       <form class="user-controls" @submit.prevent="saveUser(user)">
-        <label
-          >Freigabeprofil<select v-model="user.profile_id">
-            <option :value="null">Keine Freigabe</option>
-            <option v-for="p in profiles" :key="p.id" :value="p.id">
-              {{ p.name }}
-            </option>
-          </select></label
-        ><label class="check"
+        <ChoiceSelect
+          v-model="user.profile_id"
+          label="Freigabeprofil"
+          :choices="profiles"
+          empty-label="Keine Freigabe"
+        />
+        <label class="check"
+          ><input v-model="user.allow_download" type="checkbox" />Download
+          erlauben</label
+        >
+        <label class="check"
           ><input v-model="user.active" type="checkbox" /> Aktiv</label
         ><label class="check"
           ><input
@@ -349,15 +371,16 @@ async function copy() {
             v-model="codeName"
             required
             maxlength="120"
-            placeholder="z. B. Steuerberatung" /></label
-        ><label
-          >Freigabeprofil<select v-model="codeProfile" required>
-            <option :value="null" disabled>Profil auswählen</option>
-            <option v-for="p in profiles" :key="p.id" :value="p.id">
-              {{ p.name }}
-            </option>
-          </select></label
-        ><label
+            placeholder="z. B. Steuerberatung"
+        /></label>
+        <ChoiceSelect
+          v-model="codeProfile"
+          label="Freigabeprofil"
+          :choices="profiles"
+          required
+          empty-label="Profil auswählen"
+        />
+        <label
           >Gültigkeit<select v-model="duration">
             <option value="3600">1 Stunde</option>
             <option value="86400">24 Stunden</option>
@@ -371,6 +394,10 @@ async function copy() {
             required
         /></label>
       </div>
+      <label class="check"
+        ><input v-model="codeDownload" type="checkbox" />Download
+        erlauben</label
+      >
       <button class="primary" :disabled="busy">Zugangscode erstellen</button>
     </form>
     <div v-if="newCode" class="success code-reveal">
@@ -387,6 +414,7 @@ async function copy() {
             <th>Freigabe</th>
             <th>Gültig bis</th>
             <th>Status</th>
+            <th>Download</th>
             <th>Aktion</th>
           </tr>
         </thead>
@@ -407,6 +435,15 @@ async function copy() {
               }}</span>
             </td>
             <td>
+              <input
+                type="checkbox"
+                :checked="code.allow_download"
+                :disabled="busy"
+                :aria-label="`Download für ${code.name} erlauben`"
+                @change="saveCodeDownload(code, $event)"
+              />
+            </td>
+            <td>
               <button
                 v-if="!code.revoked && code.expires_at * 1000 > Date.now()"
                 class="ghost danger"
@@ -418,7 +455,7 @@ async function copy() {
             </td>
           </tr>
           <tr v-if="!codes.length">
-            <td colspan="5">Noch keine Zugangscodes erstellt.</td>
+            <td colspan="6">Noch keine Zugangscodes erstellt.</td>
           </tr>
         </tbody>
       </table>

@@ -18,6 +18,7 @@ from .schemas import (
     CatalogResponse,
     CodeInput,
     CodeLogin,
+    CodeUpdate,
     DocumentResult,
     ProfileInput,
     Rules,
@@ -102,6 +103,7 @@ def create_app(settings=None):
                 "name": p.name,
                 "is_admin": p.is_admin,
                 "has_access": p.is_admin or p.profile_id is not None,
+                "allow_download": p.allow_download,
                 "csrf": p.csrf,
             }
         except HTTPException:
@@ -251,6 +253,7 @@ def create_app(settings=None):
             for key, attr in (
                 ("storage_paths", "storage_path"),
                 ("correspondents", "correspondent"),
+                ("document_types", "document_type"),
             ):
                 visible = []
                 for obj in catalogs[key]:
@@ -296,6 +299,9 @@ def create_app(settings=None):
             "correspondents": [
                 {"id": x["id"], "name": x["name"]} for x in catalogs["correspondents"]
             ],
+            "document_types": [
+                {"id": x["id"], "name": x["name"]} for x in catalogs["document_types"]
+            ],
             "custom_fields": [
                 {
                     "id": x["id"],
@@ -334,9 +340,11 @@ def create_app(settings=None):
 
     @app.get("/api/documents/{identity}/{kind}")
     async def document_file(identity: int, kind: str, request: Request, p=Depends(principal)):
-        if kind not in {"preview", "download"}:
+        if kind not in {"preview", "download", "thumb"}:
             raise HTTPException(404)
         await authorized_document(identity, request, p)
+        if kind == "download" and not p.allow_download:
+            raise HTTPException(403, "Downloads sind für diesen Zugang nicht freigegeben.")
         headers = {"Accept-Encoding": "identity"}
         for name in ("range", "if-range"):
             if request.headers.get(name):
@@ -368,12 +376,28 @@ def create_app(settings=None):
                 "last-modified",
             }
         }
-        content_type = upstream.headers.get("content-type", "application/octet-stream").split(";")[
-            0
-        ]
+        content_type = (
+            upstream.headers.get("content-type", "application/octet-stream")
+            .split(";")[0]
+            .strip()
+            .lower()
+        )
+        image_extensions = {"image/webp": ".webp", "image/png": ".png", "image/jpeg": ".jpg"}
+        if kind == "thumb" and content_type not in image_extensions:
+            await upstream.aclose()
+            raise HTTPException(502, "Ungültige Thumbnail-Antwort von Paperless.")
         safe_preview = kind == "preview" and content_type == "application/pdf"
+        if kind == "preview" and not safe_preview and not p.allow_download:
+            await upstream.aclose()
+            raise HTTPException(403, "Für dieses Dokument ist nur ein Download verfügbar.")
+        inline = safe_preview or kind == "thumb"
+        extension = (
+            image_extensions[content_type]
+            if kind == "thumb"
+            else (".pdf" if content_type == "application/pdf" else "")
+        )
         response_headers["Content-Disposition"] = (
-            f'{"inline" if safe_preview else "attachment"}; filename="document-{identity}{".pdf" if content_type == "application/pdf" else ""}"'
+            f'{"inline" if inline else "attachment"}; filename="document-{identity}{extension}"'
         )
         response_headers["Content-Security-Policy"] = "sandbox"
 
@@ -452,6 +476,7 @@ def create_app(settings=None):
                     "name": u.name,
                     "active": u.active,
                     "is_admin": u.is_admin,
+                    "allow_download": u.allow_download,
                     "profile_id": u.profile_id,
                     "issuer": u.issuer,
                     "subject": u.subject,
@@ -477,6 +502,8 @@ def create_app(settings=None):
                 body.active,
                 body.is_admin,
             )
+            if "allow_download" in body.model_fields_set:
+                user.allow_download = body.allow_download
             session.commit()
         return {"ok": True}
 
@@ -490,6 +517,7 @@ def create_app(settings=None):
                     "profile_id": c.profile_id,
                     "expires_at": c.expires_at,
                     "revoked": c.revoked,
+                    "allow_download": c.allow_download,
                 }
                 for c in session.scalars(select(GuestCode).order_by(GuestCode.id.desc()))
             ]
@@ -506,6 +534,16 @@ def create_app(settings=None):
             session.add(row)
             session.commit()
             return {"id": row.id, "code": raw}
+
+    @app.patch("/api/admin/codes/{identity}", dependencies=[Depends(admin)])
+    def update_code(identity: int, body: CodeUpdate):
+        with db() as session:
+            code = session.get(GuestCode, identity)
+            if not code:
+                raise HTTPException(404)
+            code.allow_download = body.allow_download
+            session.commit()
+        return {"ok": True}
 
     @app.post("/api/admin/codes/{identity}/revoke", dependencies=[Depends(admin)])
     def revoke(identity: int):

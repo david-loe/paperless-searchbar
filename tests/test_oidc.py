@@ -77,6 +77,7 @@ def test_oidc_login_pending_assignment_and_block(env, provider):
     assert response.headers["location"] == "/"
     session = client.get("/api/auth/session").json()
     assert session["authenticated"] and not session["has_access"] and not session["is_admin"]
+    assert session["allow_download"] is False
     assert client.get("/api/documents/101").status_code == 403
     with app.state.db() as db:
         user = db.scalar(select(User).where(User.subject == "user-123"))
