@@ -81,7 +81,7 @@ class Paperless:
         if len(matches) != 1:
             raise HTTPException(
                 403,
-                "Kein eindeutiges Paperless-Konto zur bestätigten E-Mail-Adresse gefunden. "
+                "Kein eindeutiges Paperless-Konto zur übermittelten E-Mail-Adresse gefunden. "
                 "Paperless-Konto prüfen und erneut anmelden.",
             )
         if not matches[0].is_active:

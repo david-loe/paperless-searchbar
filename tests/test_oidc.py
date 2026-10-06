@@ -51,7 +51,6 @@ def token_route(provider, params, **changes):
         "nonce": params["nonce"][0],
         "name": "Anna",
         "email": "anna@example.com",
-        "email_verified": True,
         "groups": ["admins"],
     }
     claims.update(changes)
@@ -136,12 +135,12 @@ def test_secure_cookies_and_public_redirect(env):
         {"email": None},
         {"email": ""},
         {"email": "missing@example.com"},
-        {"email_verified": False},
-        {"email_verified": "true"},
-        {"email_verified": None},
+        {"email": "keine-email"},
+        {"email": 123},
+        {"email": "a" * 255 + "@example.com"},
     ],
 )
-def test_oidc_without_unique_verified_email_has_no_access(env, provider, claims):
+def test_oidc_without_unique_email_has_no_access(env, provider, claims):
     _, client, fake = env
     session = oidc_login(client, provider, **claims)
     assert session["authenticated"] and not session["has_access"]
@@ -149,6 +148,29 @@ def test_oidc_without_unique_verified_email_has_no_access(env, provider, claims)
     for suffix in ("", "/preview", "/thumb", "/download"):
         assert client.get("/api/documents/101" + suffix).status_code == 403
     assert not any(r.url.path.startswith("/api/documents/") for r in fake.calls)
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [
+        {},
+        {"email_verified": True},
+        {"email_verified": False},
+        {"email_verified": None},
+        {"email_verified": "true"},
+    ],
+)
+def test_oidc_email_verification_claim_is_not_required(env, provider, claims):
+    app, client, _ = env
+    session = oidc_login(client, provider, email=" ANNA@EXAMPLE.COM ", **claims)
+    assert session["authenticated"] and session["has_access"]
+    assert session["access_error"] is None
+    with app.state.db() as db:
+        user = db.scalar(select(User).where(User.subject == "user-123"))
+        assert user.verified_email == "anna@example.com"
+        assert user.paperless_user_id == 11
+    assert client.get("/api/documents/101").status_code == 200
+    assert client.get("/api/documents/202").status_code == 404
 
 
 def test_email_lookup_paginates_and_rejects_duplicates(env, provider):

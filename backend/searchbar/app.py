@@ -196,25 +196,22 @@ def create_app(settings=None):
                 if not user.active:
                     raise ValueError("disabled")
             email = claims.get("email")
-            verified_email = (
-                normalize_email(email)
-                if isinstance(email, str) and claims.get("email_verified") is True
-                else None
-            )
+            oidc_email = normalize_email(email) if isinstance(email, str) else None
             paperless_id = None
             link_error = None
-            if not verified_email or "@" not in verified_email or len(verified_email) > 254:
-                verified_email = None
-                link_error = "Der OIDC-Anbieter muss eine bestätigte E-Mail-Adresse liefern."
+            if not oidc_email or "@" not in oidc_email or len(oidc_email) > 254:
+                oidc_email = None
+                link_error = "Der OIDC-Anbieter muss eine gültige E-Mail-Adresse liefern."
             else:
                 try:
-                    matched = await paperless.user_for_email(verified_email)
+                    matched = await paperless.user_for_email(oidc_email)
                     paperless_id = matched.id
                 except HTTPException as exc:
                     link_error = str(exc.detail)
             with db() as session:
                 linked = session.get(User, user.id)
-                linked.verified_email = verified_email
+                # Keep the existing database/API field name for compatibility.
+                linked.verified_email = oidc_email
                 linked.paperless_user_id = paperless_id
                 linked.paperless_link_error = link_error
                 session.commit()
