@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { api, errorMessage } from "../api";
 import {
   emptyCatalog,
@@ -8,6 +8,7 @@ import {
   type User,
   type Code,
   type Catalog,
+  type SearchSettings,
 } from "../types";
 import ChoiceSelect from "../components/ChoiceSelect.vue";
 import CustomFilters from "../components/CustomFilters.vue";
@@ -16,6 +17,15 @@ const tab = ref("profiles"),
   profiles = ref<Profile[]>([]),
   users = ref<User[]>([]),
   codes = ref<Code[]>([]);
+const searchSettings = ref<SearchSettings>({ custom_field_ids: [] });
+const searchFieldChoices = computed(() => [
+  ...catalog.value.custom_fields,
+  ...searchSettings.value.custom_field_ids
+    .filter(
+      (id) => !catalog.value.custom_fields.some((field) => field.id === id),
+    )
+    .map((id) => ({ id, name: `Feld #${id} (nicht mehr verfügbar)` })),
+]);
 const error = ref(""),
   notice = ref(""),
   busy = ref(false),
@@ -32,14 +42,19 @@ const codeName = ref(""),
 const profileLabel = (id: number | null) =>
   profiles.value.find((p) => p.id === id)?.name ?? "Keine Freigabe";
 async function load() {
-  [catalog.value, profiles.value, users.value, codes.value] = await Promise.all(
-    [
-      api<Catalog>("/filters"),
-      api<Profile[]>("/admin/profiles"),
-      api<User[]>("/admin/users"),
-      api<Code[]>("/admin/codes"),
-    ],
-  );
+  [
+    catalog.value,
+    profiles.value,
+    users.value,
+    codes.value,
+    searchSettings.value,
+  ] = await Promise.all([
+    api<Catalog>("/admin/filters"),
+    api<Profile[]>("/admin/profiles"),
+    api<User[]>("/admin/users"),
+    api<Code[]>("/admin/codes"),
+    api<SearchSettings>("/admin/search-settings"),
+  ]);
 }
 onMounted(async () => {
   busy.value = true;
@@ -151,18 +166,12 @@ async function copy() {
 }
 </script>
 <template>
-  <section class="page-heading">
-    <p class="eyebrow">VERWALTUNG</p>
-    <h1>Zugang klar geregelt.</h1>
-    <p class="muted">
-      Freigaben definieren und Menschen den passenden Zugang geben.
-    </p>
-  </section>
   <p v-if="error" class="alert" role="alert">{{ error }}</p>
   <p v-if="notice" class="success" role="status">{{ notice }}</p>
   <div class="tabs" aria-label="Verwaltungsbereiche">
     <button
       v-for="item in [
+        { id: 'search', name: 'Suchfelder' },
         { id: 'profiles', name: 'Freigabeprofile' },
         { id: 'users', name: 'Benutzer' },
         { id: 'codes', name: 'Zugangscodes' },
@@ -178,6 +187,43 @@ async function copy() {
       {{ item.name }}
     </button>
   </div>
+  <form
+    v-if="tab === 'search'"
+    class="card editor"
+    @submit.prevent="
+      action(
+        () => api('/admin/search-settings', searchSettings, 'PUT'),
+        'Suchfelder gespeichert.',
+      )
+    "
+  >
+    <p class="muted">
+      Diese Felder erscheinen direkt in der Suche. Werte müssen exakt
+      übereinstimmen.
+    </p>
+    <label v-for="field in searchFieldChoices" :key="field.id" class="check">
+      <input
+        v-model="searchSettings.custom_field_ids"
+        type="checkbox"
+        :value="field.id"
+        :disabled="
+          busy ||
+          (searchSettings.custom_field_ids.length >= 8 &&
+            !searchSettings.custom_field_ids.includes(field.id))
+        "
+      />
+      {{ field.name }}
+    </label>
+    <p v-if="!catalog.custom_fields.length && !busy" class="muted">
+      Keine Custom Fields vorhanden.
+    </p>
+    <div class="actions">
+      <button class="primary" :disabled="busy">Suchfelder speichern</button
+      ><span class="small muted"
+        >{{ searchSettings.custom_field_ids.length }} von 8 Feldern</span
+      >
+    </div>
+  </form>
   <section v-if="tab === 'profiles'">
     <div class="section-line">
       <h2>Freigabeprofile</h2>

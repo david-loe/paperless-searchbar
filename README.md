@@ -124,12 +124,12 @@ Widerruf, Benutzersperren und Profiländerungen wirken beim nächsten Request, a
 
 ## Suchverhalten
 
-- Eine interne Dokument-ID entspricht der ID in einer Paperless-URL wie `/documents/123/`; sie ist keine Archivseriennummer (ASN).
+- Eine Suche per Dokument-ID öffnet einen erlaubten Treffer direkt in der Dokumentansicht. Eine interne Dokument-ID entspricht der ID in einer Paperless-URL wie `/documents/123/`; sie ist keine Archivseriennummer (ASN).
 - Speicherpfade werden nach dem Namen des konfigurierten Paperless-Objekts gewählt, nicht nach einem physischen Dateipfad.
 - Alle eingegebenen Suchkriterien gelten gemeinsam. Mindestens ein Kriterium ist erforderlich. Es gibt keine Volltext-, Tag-, ASN- oder allgemeine Datumssuche.
-- Text/URL unterstützen Gleichheit und Enthalten, Zahlen/Geldbeträge/Datumsfelder Gleichheit und Bereiche, Boolean Ja/Nein, Auswahlfelder einzelne oder mehrere Optionen und Dokumentverknüpfungen Dokument-IDs.
-- „Ist vorhanden“ prüft die Feldzuweisung. „Ist leer“ prüft ein zugewiesenes Feld ohne Wert, bei Text auch eine leere Zeichenfolge. Ein fehlendes Feld wird mit „ist vorhanden → Nein“ gesucht.
-- Geldbeträge als Zahl ohne Währung eingeben. Textgleichheit verwendet die Paperless-Semantik und berücksichtigt Groß-/Kleinschreibung; „enthält“ ignoriert sie.
+- Unter **Verwaltung → Suchfelder** legt ein Administrator bis zu acht Custom Fields fest, die als feste Eingaben in der Suche erscheinen. Anfangs sind keine Custom Fields aktiviert. Die Auswahl wird dauerhaft gespeichert.
+- Suchfelder verwenden ausschließlich exakte Übereinstimmung, auch bei direkten API-Aufrufen. Leere Eingaben setzen keinen Filter; „Nein“ und die Zahl 0 sind gültige Suchwerte. Auswahlfelder verwenden eine Option, Dokumentverknüpfungen eine vollständige Liste von IDs.
+- Geldbeträge als Zahl ohne Währung eingeben. Textgleichheit verwendet die Paperless-Semantik und berücksichtigt Groß-/Kleinschreibung. Die erweiterten Operatoren bleiben für Freigabeprofile verfügbar; deren Regeln gelten unabhängig von den aktivierten Suchfeldern.
 - Maximal acht Custom-Field-Filter pro Suche oder Profil. Paperless begrenzt die kombinierte Abfrage auf 20 atomare Bedingungen; umfangreiche Kombinationen werden verständlich abgelehnt, ohne Freigaben wegzulassen.
 - Ergebnisse enthalten 25 Dokumente je Seite, sortiert nach absteigender ID. Die aktuelle Dokumentversion wird angezeigt.
 - Vorschau mit PDF.js, Seitenwahl und Zoom, sofern Paperless eine PDF-Vorschau liefert. Andere Dateien lassen sich herunterladen. Bild-, HTML- oder Office-Dateien werden nicht aktiv in der App gerendert.
@@ -207,7 +207,9 @@ Die eigene API liegt unter `/api`. Die OpenAPI-Beschreibung unter `/api/openapi.
 | POST | `/api/auth/code`, `/api/auth/logout` | Anmeldung beziehungsweise Abmeldung. |
 | GET | `/api/auth/oidc/login`, `/api/auth/oidc/callback` | OIDC-Anmeldung. |
 | GET | `/api/filters` | Zulässige Filterdefinitionen und Auswahlvorschläge. |
-| POST | `/api/documents/search` | Typisierte Suche mit Pagination. |
+| POST | `/api/documents/search` | Typisierte Suche mit Pagination; Custom Fields nur aktiviert und exakt. |
+| GET | `/api/admin/filters` | Vollständiger Feldkatalog für die Verwaltung. |
+| GET/PUT | `/api/admin/search-settings` | Sichtbare Custom-Field-Suchfelder lesen/konfigurieren. |
 | GET | `/api/documents/{id}` | Geprüfte Dokumentdetails. |
 | GET | `/api/documents/{id}/preview`, `/api/documents/{id}/download` | Geprüfter Datei-Stream mit Range-Unterstützung. |
 | GET/POST/PUT/DELETE | `/api/admin/profiles` bzw. `/{id}` | Profile verwalten; verwendete Profile können nicht gelöscht werden. |

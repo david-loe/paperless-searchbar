@@ -3,9 +3,7 @@ async function guest(page: Page) {
   await page.goto("/login");
   await page.getByLabel("Zugangscode", { exact: true }).fill("e2e-guest-code");
   await page.getByRole("button", { name: "Anmelden", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "Was möchtest du finden?" }),
-  ).toBeVisible();
+  await expect(page.getByRole("search")).toBeVisible();
 }
 async function admin(page: Page) {
   await page.goto("/login");
@@ -24,8 +22,8 @@ test("Gast sucht, öffnet und lädt ein erlaubtes Dokument herunter", async ({
 }) => {
   await guest(page);
   await page.getByLabel("Dokument-ID", { exact: true }).fill("101");
-  await page.getByRole("button", { name: "Dokumente suchen" }).click();
-  await page.getByRole("link", { name: /Rechnung Firma A/ }).click();
+  await page.getByRole("button", { name: "Suchen", exact: true }).click();
+  await expect(page).toHaveURL(/\/documents\/101$/);
   await expect(
     page.getByRole("heading", { name: "Rechnung Firma A" }),
   ).toBeVisible();
@@ -68,7 +66,7 @@ test("OIDC-Benutzer erhält erst nach manueller Freigabe Zugriff", async ({
     .getByRole("link", { name: "Mit Organisationskonto anmelden" })
     .click();
   await expect(
-    userPage.getByRole("heading", { name: "Dein Zugang wartet auf Freigabe" }),
+    userPage.getByText("Dein Zugang wartet auf Freigabe.", { exact: true }),
   ).toBeVisible();
   await admin(adminPage);
   await adminPage
@@ -86,9 +84,9 @@ test("OIDC-Benutzer erhält erst nach manueller Freigabe Zugriff", async ({
   );
   await userPage.reload();
   await userPage.getByLabel("Dokument-ID", { exact: true }).fill("101");
-  await userPage.getByRole("button", { name: "Dokumente suchen" }).click();
+  await userPage.getByRole("button", { name: "Suchen", exact: true }).click();
   await expect(
-    userPage.getByRole("link", { name: /Rechnung Firma A/ }),
+    userPage.getByRole("heading", { name: "Rechnung Firma A" }),
   ).toBeVisible();
   await userContext.close();
   await adminContext.close();
@@ -117,9 +115,7 @@ test("Admin erstellt Profil und Code; Widerruf sperrt eine bestehende Sitzung", 
   await g.goto("/login");
   await g.getByLabel("Zugangscode", { exact: true }).fill(code);
   await g.getByRole("button", { name: "Anmelden", exact: true }).click();
-  await expect(
-    g.getByRole("heading", { name: "Was möchtest du finden?" }),
-  ).toBeVisible();
+  await expect(g.getByRole("search")).toBeVisible();
   await g.goto("/documents/101");
   await expect(
     g.getByRole("heading", { name: "Rechnung Firma A" }),
@@ -132,9 +128,7 @@ test("Admin erstellt Profil und Code; Widerruf sperrt eine bestehende Sitzung", 
     .click();
   await expect(a.getByRole("status")).toHaveText("Zugang widerrufen.");
   await g.reload();
-  await expect(
-    g.getByRole("heading", { name: "Willkommen zurück" }),
-  ).toBeVisible();
+  await expect(g.getByLabel("Zugangscode", { exact: true })).toBeVisible();
   await adminContext.close();
   await guestContext.close();
 });
@@ -144,8 +138,8 @@ test("Mobile Oberfläche bleibt bedienbar und ohne horizontalen Überlauf", asyn
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await guest(page);
-  await page.getByLabel("Dokument-ID", { exact: true }).fill("101");
-  await page.getByRole("button", { name: "Dokumente suchen" }).click();
+  await page.getByLabel("Speicherpfad", { exact: true }).selectOption("1");
+  await page.getByRole("button", { name: "Suchen", exact: true }).click();
   await expect(
     page.getByRole("link", { name: /Rechnung Firma A/ }),
   ).toBeVisible();
@@ -158,4 +152,69 @@ test("Mobile Oberfläche bleibt bedienbar und ohne horizontalen Überlauf", asyn
     path: "test-results/mobile-search.png",
     fullPage: true,
   });
+});
+
+test("Admin bestimmt direkte Suchfelder; Gäste suchen ausschließlich exakt", async ({
+  browser,
+}) => {
+  const adminContext = await browser.newContext();
+  const guestContext = await browser.newContext();
+  const a = await adminContext.newPage();
+  const g = await guestContext.newPage();
+  await admin(a);
+  await a.getByRole("button", { name: "Suchfelder", exact: true }).click();
+  await a.getByLabel("Mandant", { exact: true }).check();
+  await a.getByLabel("Bezahlt", { exact: true }).check();
+  await a.getByLabel("Kategorie", { exact: true }).check();
+  await a.getByRole("button", { name: "Suchfelder speichern" }).click();
+  await expect(a.getByRole("status")).toHaveText("Suchfelder gespeichert.");
+  await a.reload();
+  await a.getByRole("button", { name: "Suchfelder", exact: true }).click();
+  await expect(a.getByLabel("Mandant", { exact: true })).toBeChecked();
+  await guest(g);
+  await expect(g.getByRole("heading")).toHaveCount(0);
+  await expect(g.getByPlaceholder("Auswahl filtern …")).toHaveCount(0);
+  await expect(
+    g.getByRole("button", { name: /Custom Field hinzufügen/ }),
+  ).toHaveCount(0);
+  await expect(g.getByLabel("Mandant", { exact: true })).toBeVisible();
+  await expect(g.getByLabel("Betrag", { exact: true })).toHaveCount(0);
+  await g.getByLabel("Mandant", { exact: true }).fill("A");
+  const request = g.waitForRequest((r) =>
+    r.url().endsWith("/api/documents/search"),
+  );
+  await g.getByRole("button", { name: "Suchen", exact: true }).click();
+  expect((await request).postDataJSON().custom_fields).toEqual([
+    { field: 1, op: "exact", value: "A" },
+  ]);
+  await expect(g.getByRole("link", { name: /Rechnung Firma A/ })).toBeVisible();
+  await g.getByLabel("Mandant", { exact: true }).fill("a");
+  await g.getByRole("button", { name: "Suchen", exact: true }).click();
+  await expect(
+    g.getByText("Keine passenden Dokumente.", { exact: true }),
+  ).toBeVisible();
+  await g.getByRole("button", { name: "Zurücksetzen" }).click();
+  await expect(g.getByLabel("Mandant", { exact: true })).toHaveValue("");
+  await g.getByLabel("Dokument-ID", { exact: true }).fill("202");
+  await g.getByRole("button", { name: "Suchen", exact: true }).click();
+  await expect(
+    g.getByText("Keine passenden Dokumente.", { exact: true }),
+  ).toBeVisible();
+  await expect(g).toHaveURL(/\/$/);
+  await g.getByRole("button", { name: "Zurücksetzen" }).click();
+  await g.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await g.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+  ).toBe(true);
+  await g.screenshot({
+    path: "test-results/mobile-search-fields.png",
+    fullPage: true,
+  });
+  await g.setViewportSize({ width: 1440, height: 900 });
+  await g.screenshot({
+    path: "test-results/desktop-search-fields.png",
+    fullPage: true,
+  });
+  await adminContext.close();
+  await guestContext.close();
 });

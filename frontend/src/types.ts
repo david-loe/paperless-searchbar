@@ -17,6 +17,9 @@ export interface Catalog {
   correspondents: Choice[];
   custom_fields: CustomField[];
 }
+export interface SearchSettings {
+  custom_field_ids: number[];
+}
 export interface Rules {
   all_documents: boolean;
   document_ids: number[];

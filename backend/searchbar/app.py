@@ -12,7 +12,7 @@ from starlette.background import BackgroundTask
 from starlette.staticfiles import StaticFiles
 
 from .config import get_settings
-from .db import BrowserSession, GuestCode, Profile, User, database, now
+from .db import BrowserSession, GuestCode, Profile, SearchConfiguration, User, database, now
 from .paperless import Paperless, operators
 from .schemas import (
     CatalogResponse,
@@ -22,7 +22,9 @@ from .schemas import (
     ProfileInput,
     Rules,
     Search,
+    SearchInput,
     SearchResults,
+    SearchSettings,
     UserUpdate,
 )
 from .security import (
@@ -203,9 +205,47 @@ def create_app(settings=None):
             raise
         return rules, catalogs
 
+    def search_settings():
+        with db() as session:
+            row = session.get(SearchConfiguration, 1)
+            return SearchSettings(custom_field_ids=row.custom_field_ids if row else [])
+
+    @app.get("/api/admin/search-settings", dependencies=[Depends(admin)])
+    def get_search_settings():
+        return search_settings()
+
+    @app.put("/api/admin/search-settings", dependencies=[Depends(admin)])
+    async def save_search_settings(body: SearchSettings):
+        catalogs = await paperless.catalogs()
+        available = {
+            f["id"] for f in catalogs["custom_fields"] if "exact" in operators(f["data_type"])
+        }
+        if not set(body.custom_field_ids) <= available:
+            raise HTTPException(422, "Ein ausgewähltes Suchfeld ist nicht verfügbar.")
+        with db() as session:
+            row = session.get(SearchConfiguration, 1)
+            if not row:
+                row = SearchConfiguration(id=1)
+                session.add(row)
+            row.custom_field_ids = body.custom_field_ids
+            session.commit()
+        return body
+
+    @app.get("/api/admin/filters", response_model=CatalogResponse, dependencies=[Depends(admin)])
+    async def admin_filters():
+        return present_catalog(await paperless.catalogs())
+
     @app.get("/api/filters", response_model=CatalogResponse)
     async def filters(request: Request, p=Depends(principal)):
         rules, catalogs = await context(request, p)
+        fields_by_id = {f["id"]: f for f in catalogs["custom_fields"]}
+        catalogs["custom_fields"] = [
+            fields_by_id[identity]
+            for identity in search_settings().custom_field_ids
+            if identity in fields_by_id
+        ]
+        # Keep the complete catalog for permission rules, including hidden search fields.
+        permission_catalogs = {**catalogs, "custom_fields": list(fields_by_id.values())}
         if not p.is_admin:
             # Probe candidates through the same permission query; no unscoped facets.
             for key, attr in (
@@ -215,7 +255,7 @@ def create_app(settings=None):
                 visible = []
                 for obj in catalogs[key]:
                     result = await paperless.search(
-                        Search(**{attr: obj["id"], "page_size": 1}), rules, catalogs
+                        Search(**{attr: obj["id"], "page_size": 1}), rules, permission_catalogs
                     )
                     if result["count"]:
                         visible.append(obj)
@@ -228,7 +268,7 @@ def create_app(settings=None):
                     custom_fields=[{"field": field["id"], "op": "exists", "value": True}],
                     page_size=1,
                 )
-                if (await paperless.search(query, rules, catalogs))["count"]:
+                if (await paperless.search(query, rules, permission_catalogs))["count"]:
                     visible_field = dict(field)
                     if field["data_type"] == "select":
                         options = []
@@ -239,11 +279,16 @@ def create_app(settings=None):
                                 ],
                                 page_size=1,
                             )
-                            if (await paperless.search(choice_query, rules, catalogs))["count"]:
+                            if (await paperless.search(choice_query, rules, permission_catalogs))[
+                                "count"
+                            ]:
                                 options.append(option)
                         visible_field["extra_data"] = {"select_options": options}
                     fields.append(visible_field)
             catalogs["custom_fields"] = fields
+        return present_catalog(catalogs, exact_only=True)
+
+    def present_catalog(catalogs, exact_only=False):
         return {
             "storage_paths": [
                 {"id": x["id"], "name": x["name"]} for x in catalogs["storage_paths"]
@@ -256,7 +301,7 @@ def create_app(settings=None):
                     "id": x["id"],
                     "name": x["name"],
                     "data_type": x["data_type"],
-                    "operators": operators(x["data_type"]),
+                    "operators": ["exact"] if exact_only else operators(x["data_type"]),
                     "options": (x.get("extra_data") or {}).get("select_options", []),
                 }
                 for x in catalogs["custom_fields"]
@@ -265,9 +310,12 @@ def create_app(settings=None):
         }
 
     @app.post("/api/documents/search", response_model=SearchResults)
-    async def search_documents(body: Search, request: Request, p=Depends(principal)):
+    async def search_documents(body: SearchInput, request: Request, p=Depends(principal)):
         if not body.has_filter:
             raise HTTPException(422, "Mindestens ein Suchkriterium angeben.")
+        enabled = set(search_settings().custom_field_ids)
+        if any(f.field not in enabled for f in body.custom_fields):
+            raise HTTPException(422, "Dieses Suchfeld ist nicht aktiviert. Suche neu laden.")
         rules, catalogs = await context(request, p)
         return await paperless.search(body, rules, catalogs)
 

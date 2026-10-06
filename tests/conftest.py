@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from searchbar.app import create_app
 from searchbar.config import Settings
-from searchbar.db import Base, GuestCode, Profile, User, now
+from searchbar.db import Base, GuestCode, Profile, SearchConfiguration, User, now
 from searchbar.schemas import Rules
 from searchbar.security import digest
 
@@ -192,6 +192,7 @@ def env(tmp_path):
         transport=httpx.MockTransport(fake.handle),
     )
     with app.state.db() as db:
+        db.add(SearchConfiguration(id=1, custom_field_ids=[1, 5]))
         profile = Profile(
             name="Firma A",
             rules=Rules(

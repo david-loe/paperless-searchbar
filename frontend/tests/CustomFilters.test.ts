@@ -54,7 +54,7 @@ describe("Custom-Field-Eingaben", () => {
   });
 });
 describe("Auswahlfilter", () => {
-  it("filters choices without changing the selected ID", async () => {
+  it("shows choices directly and emits the selected ID", async () => {
     const wrapper = mount(ChoiceSelect, {
       props: {
         label: "Speicherpfad",
@@ -65,7 +65,7 @@ describe("Auswahlfilter", () => {
         ],
       },
     });
-    await wrapper.find("input").setValue("Buch");
+    expect(wrapper.find("input").exists()).toBe(false);
     expect(wrapper.findAll("option").map((v) => v.text())).toContain("Privat");
     expect(wrapper.emitted("update:modelValue")).toBeUndefined();
     await wrapper.find("select").setValue("2");

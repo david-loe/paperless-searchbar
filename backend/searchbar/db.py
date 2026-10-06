@@ -24,6 +24,12 @@ class Profile(Base):
     rules: Mapped[dict] = mapped_column(JSON)
 
 
+class SearchConfiguration(Base):
+    __tablename__ = "search_configuration"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_field_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
+
+
 class User(Base):
     __tablename__ = "users"
     __table_args__ = (UniqueConstraint("issuer", "subject"),)

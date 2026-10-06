@@ -28,25 +28,7 @@ async function login() {
 </script>
 <template>
   <section class="login-layout">
-    <div class="login-copy">
-      <p class="eyebrow">DEIN DOKUMENTENZUGANG</p>
-      <h1>Weniger suchen.<br />Mehr finden.</h1>
-      <p>
-        Ein direkter Weg zu den Dokumenten, die du brauchst. Übersichtlich,
-        gezielt und an einem Ort.
-      </p>
-      <div class="paper-illustration" aria-hidden="true">
-        <div class="paper">
-          <span>▤</span><i></i><i></i><i></i><b>Gefunden.</b>
-        </div>
-      </div>
-    </div>
-    <div class="card login-card">
-      <p class="eyebrow">PAPERLESS SEARCHBAR</p>
-      <h2>Willkommen zurück</h2>
-      <p class="muted">
-        Gib deinen Zugangscode ein oder nutze dein Organisationskonto.
-      </p>
+    <div class="login-card">
       <p v-if="error" class="alert" role="alert">{{ error }}</p>
       <form @submit.prevent="login">
         <label
@@ -67,9 +49,6 @@ async function login() {
           >Mit Organisationskonto anmelden</a
         ></template
       >
-      <p class="small muted">
-        Dein Zugang bestimmt, welche Dokumente du sehen kannst.
-      </p>
     </div>
   </section>
 </template>

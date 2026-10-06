@@ -20,9 +20,14 @@ def test_migrate_new_and_existing_database(tmp_path):
             ["uv", "run", "alembic", "upgrade", "head"], env=env, check=True, capture_output=True
         )
     engine, _ = database(url)
-    assert {"profiles", "users", "guest_codes", "sessions", "login_attempts"} <= set(
-        inspect(engine).get_table_names()
-    )
+    assert {
+        "profiles",
+        "users",
+        "guest_codes",
+        "sessions",
+        "login_attempts",
+        "search_configuration",
+    } <= set(inspect(engine).get_table_names())
     columns = {column["name"] for column in inspect(engine).get_columns("users")}
     assert "local_code_digest" in columns
     assert "password_hash" not in columns

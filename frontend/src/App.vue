@@ -36,7 +36,4 @@ async function logout() {
     </nav>
   </header>
   <main><RouterView :key="$route.path" /></main>
-  <footer>
-    Paperless Searchbar <span>Dokumente finden. Einfach ansehen.</span>
-  </footer>
 </template>

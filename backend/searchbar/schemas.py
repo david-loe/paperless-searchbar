@@ -59,6 +59,24 @@ class ProfileInput(Input):
     rules: Rules
 
 
+class ExactFilter(CustomFilter):
+    op: Literal["exact"] = "exact"
+
+
+class SearchInput(Search):
+    custom_fields: list[ExactFilter] = Field(default_factory=list, max_length=8)
+
+
+class SearchSettings(Input):
+    custom_field_ids: list[PositiveID] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def unique_fields(self):
+        if len(set(self.custom_field_ids)) != len(self.custom_field_ids):
+            raise ValueError("Jedes Suchfeld nur einmal auswählen.")
+        return self
+
+
 class CodeInput(Input):
     name: str = Field(min_length=1, max_length=120)
     profile_id: PositiveID
