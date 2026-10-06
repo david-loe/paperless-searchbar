@@ -5,19 +5,112 @@ from typing import Any
 
 import httpx
 from fastapi import HTTPException
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .schemas import CustomFilter, Rules, Search
 
 
+def normalize_email(value: str) -> str:
+    return value.strip().casefold()
+
+
+class PaperlessUser(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    id: int = Field(gt=0)
+    username: str = Field(min_length=1)
+    email: str
+    is_active: bool
+    is_superuser: bool
+    user_permissions: list[str]
+    inherited_permissions: list[str]
+
+    @property
+    def can_view_documents(self):
+        return self.is_active and (
+            self.is_superuser
+            or "view_document" in self.user_permissions
+            or "documents.view_document" in self.inherited_permissions
+        )
+
+
 class Paperless:
-    def __init__(self, settings):
+    def __init__(self, settings, *, username=None, transport=None):
         self.settings = settings
+        self.username = username
+        self.remote_transport = transport
         self.http = httpx.AsyncClient(
             base_url=settings.paperless_url + "/api/",
-            headers={"Authorization": "Token " + settings.paperless_token.get_secret_value()},
+            headers=(
+                {settings.paperless_remote_user_header: username}
+                if username is not None
+                else {"Authorization": "Token " + settings.paperless_token.get_secret_value()}
+            ),
             timeout=httpx.Timeout(30, connect=5),
             follow_redirects=False,
+            transport=transport,
         )
+
+    def for_user(self, username: str):
+        # Each incoming request owns a client and cookie jar, including file streams.
+        try:
+            encoded = username.encode("ascii")
+        except UnicodeEncodeError as exc:
+            raise HTTPException(
+                403, "Paperless-Benutzername muss für Remote-User ASCII enthalten."
+            ) from exc
+        if not encoded or any(c < 33 or c > 126 for c in encoded):
+            raise HTTPException(403, "Paperless-Benutzername ist für Remote-User ungültig.")
+        return Paperless(self.settings, username=username, transport=self.remote_transport)
+
+    @staticmethod
+    def parse_user(data):
+        try:
+            return PaperlessUser.model_validate(data)
+        except ValidationError as exc:
+            raise HTTPException(502, "Ungültige Paperless-Benutzerantwort.") from exc
+
+    async def user_for_email(self, email: str):
+        users = [self.parse_user(u) for u in await self.catalog("users")]
+        matches = [u for u in users if normalize_email(u.email) == email]
+        if len(matches) != 1:
+            raise HTTPException(
+                403,
+                "Kein eindeutiges Paperless-Konto zur bestätigten E-Mail-Adresse gefunden. "
+                "Paperless-Konto prüfen und erneut anmelden.",
+            )
+        if not matches[0].is_active:
+            raise HTTPException(403, "Dein Paperless-Konto ist deaktiviert.")
+        return matches[0]
+
+    async def linked_user(self, principal):
+        if not principal.paperless_user_id or not principal.verified_email:
+            raise HTTPException(
+                403,
+                principal.paperless_link_error
+                or "Keine Paperless-Zuordnung vorhanden. Bitte erneut anmelden.",
+            )
+        try:
+            data = await self.get(f"users/{principal.paperless_user_id}/")
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                raise HTTPException(
+                    403, "Das zugeordnete Paperless-Konto existiert nicht mehr."
+                ) from exc
+            raise
+        user = self.parse_user(data)
+        if (
+            user.id != principal.paperless_user_id
+            or normalize_email(user.email) != principal.verified_email
+        ):
+            raise HTTPException(
+                403, "Die Paperless-Zuordnung hat sich geändert. Bitte erneut anmelden."
+            )
+        if not user.is_active:
+            raise HTTPException(403, "Dein Paperless-Konto ist deaktiviert.")
+        if not user.can_view_documents:
+            raise HTTPException(403, "Dein Paperless-Konto hat keine Dokumentleserechte.")
+        return user
 
     async def get(self, path: str, params=None):
         try:
@@ -30,11 +123,16 @@ class Paperless:
         except ValueError as exc:
             raise HTTPException(502, "Ungültige Antwort von Paperless.") from exc
 
-    @staticmethod
-    def check(r):
+    def check(self, r):
         if r.status_code == 404:
             raise HTTPException(404, "Dokument oder Ressource nicht gefunden.")
         if r.status_code in (401, 403):
+            if self.username is not None:
+                raise HTTPException(
+                    403,
+                    "Paperless hat den Dokumentzugriff verweigert. "
+                    "Dokumentrechte und Remote-User-Konfiguration prüfen.",
+                )
             raise HTTPException(
                 502, "Der technische Paperless-Zugang hat keine ausreichenden Leserechte."
             )

@@ -1,4 +1,5 @@
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -15,11 +16,45 @@ class Settings(BaseSettings):
     paperless_url: str
     paperless_public_url: str
     paperless_token: SecretStr
+    paperless_http_remote_user_header_name: str = "HTTP_REMOTE_USER"
     secret_key: SecretStr
     oidc_issuer: str = ""
     oidc_client_id: str = ""
     oidc_client_secret: SecretStr = SecretStr("")
     static_dir: str = "frontend/dist"
+
+    @field_validator("paperless_http_remote_user_header_name")
+    @classmethod
+    def valid_remote_user_header(cls, value: str) -> str:
+        # Paperless expects the Django request.META name, not the wire header.
+        if not re.fullmatch(r"HTTP_[A-Z0-9]+(?:_[A-Z0-9]+)*", value):
+            raise ValueError(
+                "PAPERLESS_HTTP_REMOTE_USER_HEADER_NAME im Format HTTP_X_AUTH_USER angeben."
+            )
+        if value.removeprefix("HTTP_") in {
+            "AUTHORIZATION",
+            "PROXY_AUTHORIZATION",
+            "COOKIE",
+            "HOST",
+            "CONTENT_LENGTH",
+            "CONTENT_TYPE",
+            "TRANSFER_ENCODING",
+            "CONNECTION",
+            "TE",
+            "TRAILER",
+            "UPGRADE",
+            "ACCEPT_ENCODING",
+            "RANGE",
+            "IF_RANGE",
+        }:
+            raise ValueError(
+                "Der Remote-User-Header darf keinen Authentifizierungs- oder Transportheader ersetzen."
+            )
+        return value
+
+    @property
+    def paperless_remote_user_header(self) -> str:
+        return self.paperless_http_remote_user_header_name.removeprefix("HTTP_").replace("_", "-")
 
     @field_validator("app_url", "paperless_url", "paperless_public_url", "oidc_issuer")
     @classmethod

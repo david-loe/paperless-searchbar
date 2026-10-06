@@ -50,7 +50,9 @@ export interface User {
   name: string;
   active: boolean;
   is_admin: boolean;
-  profile_id: number | null;
+  verified_email: string | null;
+  paperless_user_id: number | null;
+  paperless_link_error: string | null;
   issuer: string | null;
   subject: string | null;
   local: boolean;
@@ -69,6 +71,7 @@ export interface Session {
   name?: string;
   is_admin?: boolean;
   has_access?: boolean;
+  access_error?: string | null;
   allow_download?: boolean;
   oidc_enabled: boolean;
 }

@@ -100,6 +100,10 @@ class Principal:
     csrf: str
     user_id: int | None = None
     allow_download: bool = False
+    is_oidc: bool = False
+    verified_email: str | None = None
+    paperless_user_id: int | None = None
+    paperless_link_error: str | None = None
 
 
 def principal(request: Request) -> Principal:
@@ -120,10 +124,14 @@ def principal(request: Request) -> Principal:
                 return Principal(
                     user.name,
                     user.is_admin,
-                    user.profile_id,
+                    None,
                     row.csrf,
                     user.id,
                     allow_download=user.allow_download,
+                    is_oidc=user.issuer is not None,
+                    verified_email=user.verified_email,
+                    paperless_user_id=user.paperless_user_id,
+                    paperless_link_error=user.paperless_link_error,
                 )
         elif row.code_id:
             code = db.get(GuestCode, row.code_id)
@@ -142,6 +150,9 @@ def admin(request: Request):
 
 
 def access_rules(request: Request, p: Principal) -> Rules:
+    if p.is_oidc:
+        # OIDC document access must go through the remote-user client, never this path.
+        raise HTTPException(403, "Paperless-Benutzerprüfung erforderlich.")
     if p.is_admin:
         return Rules(all_documents=True)
     with request.app.state.db() as db:
@@ -184,7 +195,7 @@ def throttle(request: Request):
 def user_by_identity(db, issuer: str, subject: str, name: str):
     user = db.scalar(select(User).where(User.issuer == issuer, User.subject == subject))
     if not user:
-        # Ignore IdP role/group/email claims for authorization and account linking.
+        # Local identity and admin rights never derive from IdP email/role/group claims.
         user = User(issuer=issuer, subject=subject, name=name[:200], is_admin=False, active=True)
         db.add(user)
         db.commit()

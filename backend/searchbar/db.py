@@ -42,7 +42,9 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     allow_download: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
-    profile_id: Mapped[int | None] = mapped_column(ForeignKey("profiles.id", ondelete="SET NULL"))
+    verified_email: Mapped[str | None] = mapped_column(String(254))
+    paperless_user_id: Mapped[int | None] = mapped_column(Integer)
+    paperless_link_error: Mapped[str | None] = mapped_column(String(300))
 
 
 class GuestCode(Base):

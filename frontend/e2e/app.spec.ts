@@ -89,7 +89,7 @@ test("Gast sieht Downloads nur nach Freigabe seines Zugangscodes", async ({
   await expect(page.locator("canvas")).toHaveCount(0);
 });
 
-test("OIDC-Benutzer erhält erst nach manueller Freigabe Zugriff", async ({
+test("OIDC-Benutzer erhält Paperless-Rechte automatisch und Downloads separat", async ({
   browser,
 }) => {
   const userContext = await browser.newContext(),
@@ -101,7 +101,7 @@ test("OIDC-Benutzer erhält erst nach manueller Freigabe Zugriff", async ({
     .getByRole("link", { name: "Mit Organisationskonto anmelden" })
     .click();
   await expect(
-    userPage.getByText("Dein Zugang wartet auf Freigabe.", { exact: true }),
+    userPage.getByLabel("Dokument-ID", { exact: true }),
   ).toBeVisible();
   await admin(adminPage);
   await adminPage
@@ -110,13 +110,10 @@ test("OIDC-Benutzer erhält erst nach manueller Freigabe Zugriff", async ({
   const user = adminPage
     .locator("article")
     .filter({ has: adminPage.getByRole("heading", { name: "Anna Beispiel" }) });
-  await user
-    .getByRole("combobox", { name: "Freigabeprofil", exact: true })
-    .click();
-  await user
-    .getByRole("searchbox", { name: "Freigabeprofil durchsuchen" })
-    .fill("Firma");
-  await user.getByRole("option", { name: "Firma A", exact: true }).click();
+  await expect(user.getByText(/Paperless-Konto #11/)).toBeVisible();
+  await expect(
+    user.getByRole("combobox", { name: "Freigabeprofil" }),
+  ).toHaveCount(0);
   await expect(
     user.getByLabel("Download erlauben", { exact: true }),
   ).not.toBeChecked();

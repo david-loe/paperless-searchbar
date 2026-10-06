@@ -151,16 +151,11 @@ def test_admin_lifecycle(env):
     assert (
         c.put(
             f"/api/admin/users/{uid}",
-            json={"profile_id": profile["id"], "active": True, "is_admin": False},
+            json={"active": True, "is_admin": False},
         ).status_code
         == 200
     )
-    assert (
-        c.put(
-            "/api/admin/users/1", json={"profile_id": None, "active": False, "is_admin": False}
-        ).status_code
-        == 409
-    )
+    assert c.put("/api/admin/users/1", json={"active": False, "is_admin": False}).status_code == 409
     assert c.delete(f"/api/admin/profiles/{profile['id']}").status_code == 409
 
 

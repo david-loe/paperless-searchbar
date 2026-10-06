@@ -66,7 +66,11 @@ def test_user_download_permission_is_live_and_not_derived_from_role(env, local_a
         login(client)
         with app.state.db() as db:
             user = User(
-                name="OIDC", issuer="https://idp.test", subject="download-user", profile_id=1
+                name="OIDC",
+                issuer="https://idp.test",
+                subject="download-user",
+                verified_email="anna@example.com",
+                paperless_user_id=11,
             )
             db.add(user)
             db.flush()
@@ -78,7 +82,7 @@ def test_user_download_permission_is_live_and_not_derived_from_role(env, local_a
     try:
         login(admin, admin=True)
         assert client.get("/api/auth/session").json()["allow_download"] is False
-        body = {"profile_id": None if local_admin else 1, "active": True, "is_admin": local_admin}
+        body = {"active": True, "is_admin": local_admin}
         for allow in (True, False):
             assert (
                 admin.put(

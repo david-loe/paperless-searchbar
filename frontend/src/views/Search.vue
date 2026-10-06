@@ -96,7 +96,7 @@ function reset() {
 <template>
   <div class="search-page" :class="{ 'has-results': searched }">
     <p v-if="!session?.has_access" class="empty" role="status">
-      Dein Zugang wartet auf Freigabe.
+      {{ session?.access_error || "Dein Zugang wartet auf Freigabe." }}
     </p>
     <template v-else>
       <form

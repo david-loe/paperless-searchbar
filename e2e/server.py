@@ -45,6 +45,7 @@ def create_test_app():
     app.state.temp_directory = directory
     Base.metadata.create_all(app.state.engine)
     fake = FakePaperless()
+    app.state.paperless.remote_transport = httpx.MockTransport(fake.handle)
     app.state.paperless.http = httpx.AsyncClient(
         base_url="http://paperless.test/api/",
         headers={"Authorization": "Token test-token"},
@@ -129,6 +130,8 @@ def create_test_app():
             "exp": now() + 300,
             "nonce": original["nonce"],
             "name": "Anna Beispiel",
+            "email": "anna@example.com",
+            "email_verified": True,
         }
         return {
             "access_token": secrets.token_urlsafe(24),

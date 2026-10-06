@@ -4,7 +4,7 @@ import secrets
 from sqlalchemy import delete, select
 
 from .config import Settings, get_settings
-from .db import BrowserSession, User, database
+from .db import Base, BrowserSession, User, database
 from .security import digest
 
 
@@ -34,11 +34,22 @@ def rotate_admin_code(settings: Settings, name: str = "admin") -> str:
     return raw
 
 
+def initialize_database(settings: Settings):
+    engine, _ = database(settings.database_url)
+    try:
+        Base.metadata.create_all(engine)
+    finally:
+        engine.dispose()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Lokalen Admin-Code erzeugen oder ersetzen")
-    parser.add_argument("command", choices=["admin-code"])
+    parser.add_argument("command", choices=["admin-code", "init-db"])
     parser.add_argument("--name", default="admin", help="Interne Admin-Kennung (Standard: admin)")
     args = parser.parse_args()
+    if args.command == "init-db":
+        initialize_database(get_settings())
+        return
     try:
         code = rotate_admin_code(get_settings(), args.name)
     except ValueError as exc:

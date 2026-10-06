@@ -9,7 +9,6 @@ dependencies = [
     "httpx>=0.28",
     "pydantic-settings>=2.10",
     "sqlalchemy>=2.0",
-    "alembic>=1.16",
     "authlib>=1.6",
     "itsdangerous>=2.2",
 ]

@@ -39,3 +39,58 @@ def test_config_errors_do_not_echo_secrets():
             paperless_url="not-a-url", paperless_token="do-not-leak-token", secret_key="s" * 40
         )
     assert "do-not-leak-token" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "configured, expected",
+    [
+        (None, "REMOTE-USER"),
+        ("HTTP_X_AUTH_USER", "X-AUTH-USER"),
+        ("HTTP_X_AUTHENTIK_USERNAME", "X-AUTHENTIK-USERNAME"),
+    ],
+)
+def test_remote_user_header_from_environment(monkeypatch, configured, expected):
+    monkeypatch.delenv("PAPERLESS_HTTP_REMOTE_USER_HEADER_NAME", raising=False)
+    if configured is not None:
+        monkeypatch.setenv("PAPERLESS_HTTP_REMOTE_USER_HEADER_NAME", configured)
+    settings = Settings(
+        _env_file=None,
+        paperless_url="http://paperless.test",
+        paperless_public_url="http://paperless.test",
+        paperless_token="test",
+        secret_key="s" * 40,
+    )
+    assert settings.paperless_remote_user_header == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "HTTP_",
+        "Remote-User",
+        "HTTP_X-AUTH-USER",
+        "HTTP_X_USER\r\nInjected: yes",
+        "HTTP_X_USER:bad",
+        "http_x_user",
+        "HTTP_X_ÜSER",
+        "HTTP_X_USER ",
+        "HTTP_AUTHORIZATION",
+        "HTTP_COOKIE",
+        "HTTP_HOST",
+        "HTTP_CONTENT_LENGTH",
+        "HTTP_RANGE",
+        "HTTP_IF_RANGE",
+        "HTTP_ACCEPT_ENCODING",
+    ],
+)
+def test_invalid_or_conflicting_remote_user_headers_rejected(value):
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            paperless_url="http://paperless.test",
+            paperless_public_url="http://paperless.test",
+            paperless_token="test",
+            secret_key="s" * 40,
+            paperless_http_remote_user_header_name=value,
+        )

@@ -36,4 +36,4 @@ docker restart "$container" >/dev/null
 port="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "8000/tcp") 0).HostPort}}' "$container")"
 wait_healthy
 docker exec "$container" python -c 'from searchbar.db import database, Profile; from searchbar.config import get_settings; from sqlalchemy import select; _, factory = database(get_settings().database_url); db = factory(); assert db.scalar(select(Profile)).name == "Persistenztest"'
-echo 'Container smoke test passed: HTTP, migrations, non-root, admin-code CLI and volume persistence.'
+echo 'Container smoke test passed: HTTP, schema initialization, non-root, admin-code CLI and volume persistence.'

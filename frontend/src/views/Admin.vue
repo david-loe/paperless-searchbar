@@ -124,7 +124,6 @@ async function saveUser(user: User) {
     await api(
       `/admin/users/${user.id}`,
       {
-        profile_id: user.profile_id,
         active: user.active,
         is_admin: user.is_admin,
         allow_download: user.allow_download,
@@ -324,8 +323,8 @@ async function copy() {
   <section v-if="tab === 'users'">
     <h2>Benutzer und Freigaben</h2>
     <p class="muted">
-      Neue OIDC-Benutzer erscheinen nach ihrer ersten Anmeldung. Weise ihnen ein
-      Profil zu.
+      OIDC-Benutzer erhalten ihre Dokumentrechte aus Paperless. Die Zuordnung
+      erfolgt über ihre bestätigte E-Mail-Adresse.
     </p>
     <article v-for="user in users" :key="user.id" class="card user-card">
       <div>
@@ -339,12 +338,17 @@ async function copy() {
         </p>
       </div>
       <form class="user-controls" @submit.prevent="saveUser(user)">
-        <ChoiceSelect
-          v-model="user.profile_id"
-          label="Freigabeprofil"
-          :choices="profiles"
-          empty-label="Keine Freigabe"
-        />
+        <p v-if="!user.local" class="small muted">
+          {{ user.verified_email || "Keine bestätigte E-Mail-Adresse" }} ·
+          {{
+            user.paperless_user_id
+              ? `Paperless-Konto #${user.paperless_user_id}`
+              : "Keine Paperless-Zuordnung"
+          }}
+          <span v-if="user.paperless_link_error">{{
+            user.paperless_link_error
+          }}</span>
+        </p>
         <label class="check"
           ><input v-model="user.allow_download" type="checkbox" />Download
           erlauben</label

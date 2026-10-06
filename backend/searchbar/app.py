@@ -13,7 +13,7 @@ from starlette.staticfiles import StaticFiles
 
 from .config import get_settings
 from .db import BrowserSession, GuestCode, Profile, SearchConfiguration, User, database, now
-from .paperless import Paperless, operators
+from .paperless import Paperless, normalize_email, operators
 from .schemas import (
     CatalogResponse,
     CodeInput,
@@ -94,7 +94,7 @@ def create_app(settings=None):
         return app.openapi()
 
     @app.get("/api/auth/session")
-    def session_info(request: Request):
+    async def session_info(request: Request):
         response = JSONResponse({})
         try:
             p = principal(request)
@@ -105,7 +105,15 @@ def create_app(settings=None):
                 "has_access": p.is_admin or p.profile_id is not None,
                 "allow_download": p.allow_download,
                 "csrf": p.csrf,
+                "access_error": None,
             }
+            if p.is_oidc:
+                try:
+                    await paperless.linked_user(p)
+                    data["has_access"] = True
+                except HTTPException as exc:
+                    data["has_access"] = False
+                    data["access_error"] = exc.detail
         except HTTPException:
             with db() as session:
                 row = session.get(BrowserSession, request.state.sid) if request.state.sid else None
@@ -186,6 +194,29 @@ def create_app(settings=None):
                 )
                 if not user.active:
                     raise ValueError("disabled")
+            email = claims.get("email")
+            verified_email = (
+                normalize_email(email)
+                if isinstance(email, str) and claims.get("email_verified") is True
+                else None
+            )
+            paperless_id = None
+            link_error = None
+            if not verified_email or "@" not in verified_email or len(verified_email) > 254:
+                verified_email = None
+                link_error = "Der OIDC-Anbieter muss eine bestätigte E-Mail-Adresse liefern."
+            else:
+                try:
+                    matched = await paperless.user_for_email(verified_email)
+                    paperless_id = matched.id
+                except HTTPException as exc:
+                    link_error = str(exc.detail)
+            with db() as session:
+                linked = session.get(User, user.id)
+                linked.verified_email = verified_email
+                linked.paperless_user_id = paperless_id
+                linked.paperless_link_error = link_error
+                session.commit()
             response = RedirectResponse("/", status_code=303)
             issue_session(request, response, user_id=user.id)
             return response
@@ -195,6 +226,9 @@ def create_app(settings=None):
             return RedirectResponse("/login?error=oidc", status_code=303)
 
     async def context(request, p):
+        if p.is_oidc:
+            await paperless.linked_user(p)
+            return Rules(all_documents=True), await paperless.catalogs()
         rules = access_rules(request, p)
         catalogs = await paperless.catalogs()
         try:
@@ -206,6 +240,18 @@ def create_app(settings=None):
                 ) from exc
             raise
         return rules, catalogs
+
+    async def document_context(request: Request, p=Depends(principal)):
+        if p.is_oidc:
+            user = await paperless.linked_user(p)
+            client = paperless.for_user(user.username)
+            try:
+                yield client, Rules(all_documents=True), await paperless.catalogs()
+            finally:
+                await client.http.aclose()
+        else:
+            rules, catalogs = await context(request, p)
+            yield paperless, rules, catalogs
 
     def search_settings():
         with db() as session:
@@ -248,7 +294,7 @@ def create_app(settings=None):
         ]
         # Keep the complete catalog for permission rules, including hidden search fields.
         permission_catalogs = {**catalogs, "custom_fields": list(fields_by_id.values())}
-        if not p.is_admin:
+        if not p.is_admin and not p.is_oidc:
             # Probe candidates through the same permission query; no unscoped facets.
             for key, attr in (
                 ("storage_paths", "storage_path"),
@@ -316,33 +362,45 @@ def create_app(settings=None):
         }
 
     @app.post("/api/documents/search", response_model=SearchResults)
-    async def search_documents(body: SearchInput, request: Request, p=Depends(principal)):
+    async def search_documents(body: SearchInput, ctx=Depends(document_context)):
         if not body.has_filter:
             raise HTTPException(422, "Mindestens ein Suchkriterium angeben.")
         enabled = set(search_settings().custom_field_ids)
         if any(f.field not in enabled for f in body.custom_fields):
             raise HTTPException(422, "Dieses Suchfeld ist nicht aktiviert. Suche neu laden.")
-        rules, catalogs = await context(request, p)
-        return await paperless.search(body, rules, catalogs)
+        client, rules, catalogs = ctx
+        return await client.search(body, rules, catalogs)
 
-    async def authorized_document(identity, request, p):
+    async def authorized_document(identity, ctx):
         if identity < 1:
             raise HTTPException(404, "Dokument nicht gefunden.")
-        rules, catalogs = await context(request, p)
-        result = await paperless.search(Search(document_id=identity, page_size=1), rules, catalogs)
+        client, rules, catalogs = ctx
+        try:
+            result = await client.search(Search(document_id=identity, page_size=1), rules, catalogs)
+        except HTTPException as exc:
+            if client.username is not None and exc.status_code in (403, 404):
+                raise HTTPException(404, "Dokument nicht gefunden.") from exc
+            raise
         if not result["results"]:
             raise HTTPException(404, "Dokument nicht gefunden.")
         return result["results"][0]
 
     @app.get("/api/documents/{identity}", response_model=DocumentResult)
-    async def document(identity: int, request: Request, p=Depends(principal)):
-        return await authorized_document(identity, request, p)
+    async def document(identity: int, ctx=Depends(document_context)):
+        return await authorized_document(identity, ctx)
 
     @app.get("/api/documents/{identity}/{kind}")
-    async def document_file(identity: int, kind: str, request: Request, p=Depends(principal)):
+    async def document_file(
+        identity: int,
+        kind: str,
+        request: Request,
+        p=Depends(principal),
+        ctx=Depends(document_context),
+    ):
         if kind not in {"preview", "download", "thumb"}:
             raise HTTPException(404)
-        await authorized_document(identity, request, p)
+        await authorized_document(identity, ctx)
+        client = ctx[0]
         if kind == "download" and not p.allow_download:
             raise HTTPException(403, "Downloads sind für diesen Zugang nicht freigegeben.")
         headers = {"Accept-Encoding": "identity"}
@@ -350,16 +408,16 @@ def create_app(settings=None):
             if request.headers.get(name):
                 headers[name] = request.headers[name]
         try:
-            upstream = await paperless.http.send(
-                paperless.http.build_request(
-                    "GET", f"documents/{identity}/{kind}/", headers=headers
-                ),
+            upstream = await client.http.send(
+                client.http.build_request("GET", f"documents/{identity}/{kind}/", headers=headers),
                 stream=True,
             )
         except httpx.HTTPError as exc:
             raise HTTPException(502, "Dokumentdatei ist nicht erreichbar.") from exc
         try:
-            paperless.check(upstream)
+            if client.username is not None and upstream.status_code in (401, 403, 404):
+                raise HTTPException(404, "Dokument nicht gefunden.")
+            client.check(upstream)
         except Exception:
             await upstream.aclose()
             raise
@@ -459,9 +517,7 @@ def create_app(settings=None):
             row = session.get(Profile, identity)
             if not row:
                 raise HTTPException(404)
-            if session.scalar(
-                select(GuestCode.id).where(GuestCode.profile_id == identity)
-            ) or session.scalar(select(User.id).where(User.profile_id == identity)):
+            if session.scalar(select(GuestCode.id).where(GuestCode.profile_id == identity)):
                 raise HTTPException(409, "Das Profil wird noch verwendet.")
             session.delete(row)
             session.commit()
@@ -477,7 +533,9 @@ def create_app(settings=None):
                     "active": u.active,
                     "is_admin": u.is_admin,
                     "allow_download": u.allow_download,
-                    "profile_id": u.profile_id,
+                    "verified_email": u.verified_email,
+                    "paperless_user_id": u.paperless_user_id,
+                    "paperless_link_error": u.paperless_link_error,
                     "issuer": u.issuer,
                     "subject": u.subject,
                     "local": u.username is not None,
@@ -495,13 +553,7 @@ def create_app(settings=None):
                 raise HTTPException(409, "Den eigenen Admin-Zugang nicht sperren oder herabstufen.")
             if user.username and not body.is_admin:
                 raise HTTPException(409, "Lokale Konten sind ausschließlich Administratoren.")
-            if body.profile_id and not session.get(Profile, body.profile_id):
-                raise HTTPException(422, "Profil nicht gefunden.")
-            user.profile_id, user.active, user.is_admin = (
-                body.profile_id,
-                body.active,
-                body.is_admin,
-            )
+            user.active, user.is_admin = body.active, body.is_admin
             if "allow_download" in body.model_fields_set:
                 user.allow_download = body.allow_download
             session.commit()

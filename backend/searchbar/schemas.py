@@ -94,7 +94,6 @@ class CodeUpdate(Input):
 
 
 class UserUpdate(Input):
-    profile_id: PositiveID | None = None
     active: bool
     is_admin: bool
     allow_download: bool = Field(default=False, strict=True)

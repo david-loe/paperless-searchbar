@@ -152,6 +152,25 @@ class FakePaperless:
         self.calls = []
         self.catalog = copy.deepcopy(CATALOG)
         self.docs = copy.deepcopy(DOCS)
+        self.users = [
+            {
+                "id": 11,
+                "username": "anna",
+                "email": "anna@example.com",
+                "is_active": True,
+                "is_superuser": False,
+                "groups": [7],
+                "user_permissions": [],
+                "inherited_permissions": ["documents.view_document"],
+            }
+        ]
+        self.permissions = {
+            101: {"owner": 99, "users": [], "groups": [7]},
+            202: {"owner": 99, "users": [], "groups": [8]},
+            303: {"owner": 99, "users": [], "groups": []},
+        }
+        self.remote_error = None
+        self.remote_header = "Remote-User"
         self.error = None
         self.thumbnail_status = 200
         self.thumbnail_content_type = "image/png"
@@ -159,10 +178,55 @@ class FakePaperless:
     def handle(self, request):
         self.calls.append(request)
         assert request.method == "GET", "Paperless must remain read-only"
-        assert request.headers["authorization"] == "Token test-token"
+        username = request.headers.get(self.remote_header)
+        user = None
+        if username is not None:
+            assert "authorization" not in request.headers
+            assert request.url.path.startswith("/api/documents/")
+            if self.remote_error:
+                return httpx.Response(self.remote_error)
+            user = next((u for u in self.users if u["username"] == username), None)
+            if not user or not user["is_active"]:
+                return httpx.Response(401)
+            if not (
+                user["is_superuser"]
+                or "view_document" in user["user_permissions"]
+                or "documents.view_document" in user["inherited_permissions"]
+            ):
+                return httpx.Response(403)
+        else:
+            assert request.headers["authorization"] == "Token test-token"
+
+        def visible(doc_id):
+            if user is None or user["is_superuser"]:
+                return True
+            perms = self.permissions.get(doc_id, {"owner": 99, "users": [], "groups": []})
+            return (
+                perms["owner"] is None
+                or perms["owner"] == user["id"]
+                or user["id"] in perms["users"]
+                or bool(set(user["groups"]) & set(perms["groups"]))
+            )
+
         if self.error:
             return httpx.Response(self.error)
         resource = request.url.path.removeprefix("/api/").strip("/")
+        if resource == "users":
+            page = int(request.url.params.get("page", 1))
+            size = int(request.url.params.get("page_size", 100))
+            return httpx.Response(
+                200,
+                json={
+                    "count": len(self.users),
+                    "next": "http://untrusted.test/" if page * size < len(self.users) else None,
+                    "results": self.users[(page - 1) * size : page * size],
+                },
+            )
+        if resource.startswith("users/"):
+            found = next((u for u in self.users if u["id"] == int(resource.split("/")[1])), None)
+            return httpx.Response(200, json=found) if found else httpx.Response(404)
+        if resource.startswith("documents/") and not visible(int(resource.split("/")[1])):
+            return httpx.Response(403)
         if resource in self.catalog:
             return httpx.Response(
                 200,
@@ -173,7 +237,7 @@ class FakePaperless:
                 },
             )
         if resource == "documents":
-            docs = self.docs[:]
+            docs = [d for d in self.docs if visible(d["id"])]
             for param, field in [
                 ("id__in", "id"),
                 ("storage_path__id__in", "storage_path"),
@@ -226,6 +290,7 @@ def env(tmp_path):
     app = create_app(settings)
     Base.metadata.create_all(app.state.engine)
     fake = FakePaperless()
+    app.state.paperless.remote_transport = httpx.MockTransport(fake.handle)
     app.state.paperless.http = httpx.AsyncClient(
         base_url="http://paperless.test/api/",
         headers={"Authorization": "Token test-token"},

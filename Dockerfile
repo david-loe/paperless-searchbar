@@ -17,7 +17,6 @@ COPY backend/ ./backend/
 RUN uv sync --locked --no-dev --no-editable && \
     groupadd --gid 10001 searchbar && useradd --uid 10001 --gid searchbar --no-create-home searchbar && \
     mkdir -p /data && chown searchbar:searchbar /data
-COPY alembic.ini ./
 COPY --from=frontend /build/frontend/dist ./frontend/dist
 COPY --chmod=755 scripts/entrypoint.sh /app/entrypoint.sh
 LABEL org.opencontainers.image.source="https://github.com/david-loe/paperless-searchbar" \
