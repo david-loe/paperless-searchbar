@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -7,6 +8,7 @@ import httpx
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from .cache import AsyncCache
 from .schemas import CustomFilter, Rules, Search
 
 
@@ -36,6 +38,9 @@ class PaperlessUser(BaseModel):
 
 class Paperless:
     def __init__(self, settings, *, username=None, transport=None):
+        self.catalog_cache = AsyncCache(settings.paperless_cache_ttl_seconds, capacity=1)
+        self.filter_cache = AsyncCache(settings.paperless_cache_ttl_seconds)
+        self.probe_slots = asyncio.Semaphore(6)
         self.settings = settings
         self.username = username
         self.remote_transport = transport
@@ -155,15 +160,27 @@ class Paperless:
             if page > 1000:
                 raise HTTPException(502, "Paperless-Auswahlliste ist zu groß.")
 
-    async def catalogs(self):
-        import asyncio
+    async def close(self):
+        await self.filter_cache.close()
+        await self.catalog_cache.close()
+        await self.http.aclose()
 
-        paths, people, fields, document_types = await asyncio.gather(
-            self.catalog("storage_paths"),
-            self.catalog("correspondents"),
-            self.catalog("custom_fields"),
-            self.catalog("document_types"),
-        )
+    async def catalogs(self):
+        entry = await self.catalog_cache.get("catalogs", self._catalogs)
+        return {**entry.value, "_generation": entry.generation, "_expires_at": entry.expires_at}
+
+    async def _catalogs(self):
+        tasks = [
+            asyncio.create_task(self.catalog(resource))
+            for resource in ("storage_paths", "correspondents", "custom_fields", "document_types")
+        ]
+        try:
+            paths, people, fields, document_types = await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
         return {
             "storage_paths": paths,
             "correspondents": people,
@@ -208,16 +225,54 @@ class Paperless:
             or not isinstance(data.get("count"), int)
         ):
             raise HTTPException(502, "Ungültige Dokumentenliste von Paperless.")
+        indexes = {
+            key: {item["id"]: item for item in catalogs[key]}
+            for key in ("storage_paths", "correspondents", "custom_fields", "document_types")
+        }
         return {
             "count": data["count"],
-            "results": [self.present(d, catalogs) for d in data["results"]],
+            "results": [self.present(d, indexes) for d in data["results"]],
         }
 
-    def present(self, d: dict, catalogs: dict):
-        def label(kind, identity):
-            return next((v["name"] for v in catalogs[kind] if v["id"] == identity), None)
+    async def exists(self, search: Search, rules: Rules, catalogs: dict):
+        params = compile_query(search, rules, catalogs["custom_fields"])
+        if params is None:
+            return False
+        params.update(page=1, page_size=1, fields="id")
+        data = await self.get("documents/", params)
+        if (
+            not isinstance(data, dict)
+            or not isinstance(data.get("results"), list)
+            or type(data.get("count")) is not int
+        ):
+            raise HTTPException(502, "Ungültige Dokumentenliste von Paperless.")
+        return bool(data["results"])
 
-        fields = {f["id"]: f for f in catalogs["custom_fields"]}
+    async def visible_choices(self, choices, query, rules, catalogs):
+        """Bound task count as well as app-wide concurrent probe requests."""
+        items = iter(enumerate(choices))
+        visible = [False] * len(choices)
+
+        async def worker():
+            for index, choice in items:
+                async with self.probe_slots:
+                    visible[index] = await self.exists(query(choice), rules, catalogs)
+
+        tasks = [asyncio.create_task(worker()) for _ in range(min(6, len(choices)))]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        return [choice for choice, allowed in zip(choices, visible, strict=True) if allowed]
+
+    def present(self, d: dict, indexes: dict):
+        def label(kind, identity):
+            item = indexes[kind].get(identity)
+            return item["name"] if item else None
+
+        fields = indexes["custom_fields"]
         custom = []
         for item in d.get("custom_fields", []):
             f = fields.get(item["field"])

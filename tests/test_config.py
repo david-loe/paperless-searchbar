@@ -94,3 +94,16 @@ def test_invalid_or_conflicting_remote_user_headers_rejected(value):
             secret_key="s" * 40,
             paperless_http_remote_user_header_name=value,
         )
+
+
+@pytest.mark.parametrize("ttl", [-1, 301])
+def test_cache_ttl_bounds(ttl):
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            paperless_url="http://paperless.test",
+            paperless_public_url="http://paperless.test",
+            paperless_token="test",
+            secret_key="s" * 40,
+            paperless_cache_ttl_seconds=ttl,
+        )

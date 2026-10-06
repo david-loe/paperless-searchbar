@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { defineAsyncComponent, onMounted, onUnmounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { api, errorMessage, session } from "../api";
 import type { Document } from "../types";
-import PdfPreview from "../components/PdfPreview.vue";
+const PdfPreview = defineAsyncComponent(
+  () => import("../components/PdfPreview.vue"),
+);
 import { displayValue as display, displayDate } from "../format";
 const id = String(useRoute().params.id),
   doc = ref<Document | null>(null),
@@ -12,7 +14,10 @@ const id = String(useRoute().params.id),
   loading = ref(true);
 let timer: ReturnType<typeof setInterval> | undefined;
 let alive = true;
+let checking = false;
 async function check() {
+  if (checking || !alive) return;
+  checking = true;
   try {
     const result = await api<Document>(`/documents/${id}`);
     if (alive) doc.value = result;
@@ -22,6 +27,8 @@ async function check() {
       preview.value = "";
       error.value = errorMessage(e);
     }
+  } finally {
+    checking = false;
   }
 }
 onMounted(async () => {

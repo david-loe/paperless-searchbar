@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from dotenv import dotenv_values
-from pydantic import SecretStr, ValidationInfo, field_validator, model_validator
+from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     oidc_issuer: str = ""
     oidc_client_id: str = ""
     oidc_client_secret: SecretStr = SecretStr("")
+    paperless_cache_ttl_seconds: int = Field(default=300, ge=0, le=300)
     static_dir: str = "frontend/dist"
 
     @field_validator("paperless_http_remote_user_header_name")

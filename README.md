@@ -50,20 +50,21 @@ Die App spricht ausschließlich lesende Paperless-Endpunkte an. Vorschauen und D
 
 ## Konfiguration
 
-| Variable | Bedeutung |
-| --- | --- |
-| `APP_URL` | Öffentliche Origin der App, z. B. `https://suche.example.com`; ohne Unterpfad. Relevant für OIDC, Cookies und CSRF. |
-| `PAPERLESS_URL` | Interne Basisadresse von Paperless, ohne `/api/`. |
-| `PAPERLESS_HTTP_REMOTE_USER_HEADER_NAME` | Derselbe Django-Headername wie in Paperless, Standard `HTTP_REMOTE_USER`. Beispiel: `HTTP_X_AUTH_USER` sendet `X-Auth-User`. |
-| `PAPERLESS_PUBLIC_URL` | Öffentliche Basisadresse von Paperless für Bearbeitungslinks. |
-| `PAPERLESS_TOKEN` | API-Token des technischen Lesebenutzers. |
-| `SECRET_KEY` | Zufälliger Schlüssel mit mindestens 32 Zeichen. Eine Änderung macht vorhandene Sitzungen, Gastcodes und lokale Admin-Codes ungültig. |
-| `DATABASE_URL` | Standard: `sqlite:////data/searchbar.db`. Diese Version unterstützt SQLite. |
-| `OIDC_ISSUER` | Optional: exakter Issuer aus dem Discovery-Dokument des Providers. |
-| `OIDC_CLIENT_ID` | Client-ID; gemeinsam mit dem Issuer angeben. |
-| `OIDC_CLIENT_SECRET` | Client-Secret des vertraulichen OIDC-Clients. |
-| `FORWARDED_ALLOW_IPS` | Vertrauenswürdige Proxy-IP-Adressen oder -Netze für Uvicorn. Standard: `127.0.0.1`. |
-| `STATIC_DIR` | Pfad der gebauten Vue-Oberfläche; im Image `/app/frontend/dist`. |
+| Variable                                 | Bedeutung                                                                                                                            |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `APP_URL`                                | Öffentliche Origin der App, z. B. `https://suche.example.com`; ohne Unterpfad. Relevant für OIDC, Cookies und CSRF.                  |
+| `PAPERLESS_URL`                          | Interne Basisadresse von Paperless, ohne `/api/`.                                                                                    |
+| `PAPERLESS_HTTP_REMOTE_USER_HEADER_NAME` | Derselbe Django-Headername wie in Paperless, Standard `HTTP_REMOTE_USER`. Beispiel: `HTTP_X_AUTH_USER` sendet `X-Auth-User`.         |
+| `PAPERLESS_PUBLIC_URL`                   | Öffentliche Basisadresse von Paperless für Bearbeitungslinks.                                                                        |
+| `PAPERLESS_CACHE_TTL_SECONDS`            | Katalog- und Gäste-Filtercache in Sekunden: Standard `300`, Bereich `0–300`; `0` deaktiviert beide Caches.                           |
+| `PAPERLESS_TOKEN`                        | API-Token des technischen Lesebenutzers.                                                                                             |
+| `SECRET_KEY`                             | Zufälliger Schlüssel mit mindestens 32 Zeichen. Eine Änderung macht vorhandene Sitzungen, Gastcodes und lokale Admin-Codes ungültig. |
+| `DATABASE_URL`                           | Standard: `sqlite:////data/searchbar.db`. Diese Version unterstützt SQLite.                                                          |
+| `OIDC_ISSUER`                            | Optional: exakter Issuer aus dem Discovery-Dokument des Providers.                                                                   |
+| `OIDC_CLIENT_ID`                         | Client-ID; gemeinsam mit dem Issuer angeben.                                                                                         |
+| `OIDC_CLIENT_SECRET`                     | Client-Secret des vertraulichen OIDC-Clients.                                                                                        |
+| `FORWARDED_ALLOW_IPS`                    | Vertrauenswürdige Proxy-IP-Adressen oder -Netze für Uvicorn. Standard: `127.0.0.1`.                                                  |
+| `STATIC_DIR`                             | Pfad der gebauten Vue-Oberfläche; im Image `/app/frontend/dist`.                                                                     |
 
 `SECRET_KEY_FILE`, `PAPERLESS_TOKEN_FILE` und `OIDC_CLIENT_SECRET_FILE` können auf eingebundene Secret-Dateien verweisen. Die Datei hat Vorrang vor dem entsprechenden direkten Wert. Diese Pfade müssen im Container existieren; Docker Secrets über die eigene Compose-Konfiguration einbinden.
 
@@ -161,7 +162,7 @@ Beide Bedingungen müssen zutreffen. Mehrere erlaubte Speicherpfade, Korresponde
 
 Nicht gesetzte Kriterien schränken nicht ein. Ein vollständig leeres Profil erlaubt **kein** Dokument. Für vollständigen Zugriff ausdrücklich **Alle Dokumente erlauben** auswählen. Lokale Administratoren haben vollständigen Zugriff innerhalb der Leserechte des technischen Paperless-Benutzers.
 
-Freigaben umfassen die Dokumentvorschau und deren angezeigte Metadaten. Es gibt keine Schwärzung von Dokumentinhalten oder einzelnen Custom Fields. Gelöschte beziehungsweise nicht lesbare Profilreferenzen sperren das Profil; die Verwaltung zeigt den Fehler an. Auch einzelne gelöschte Dokument-IDs müssen aus einem Profil entfernt werden.
+Freigaben umfassen die Dokumentvorschau und deren angezeigte Metadaten. Es gibt keine Schwärzung von Dokumentinhalten oder einzelnen Custom Fields. Gelöschte beziehungsweise nicht lesbare Profilreferenzen sperren das Profil (Katalogreferenzen spätestens nach Ablauf des konfigurierten Caches); die Verwaltung zeigt den Fehler an. Auch einzelne gelöschte Dokument-IDs müssen aus einem Profil entfernt werden.
 
 Unter **Verwaltung → Zugangscodes** einen benannten Code mit Profil und Ablauf anlegen. Voreinstellungen: eine Stunde, 24 Stunden, sieben Tage oder individuelles Datum. Der Code wird einmal angezeigt und kann bis zum Ablauf mehrfach verwendet werden. Bewahre ihn nur so lange auf, wie er benötigt wird. Die App speichert ausschließlich einen HMAC-Hash.
 
@@ -184,7 +185,7 @@ Ohne Freigabe blendet die Dokumentansicht den Download-Button aus und der Downlo
 - Ergebnisse enthalten 25 Dokumente je Seite, sortiert nach absteigender ID. Jeder Treffer zeigt ein Thumbnail, den Dokumentnamen, beschriftete Basisdaten und die aktivierten Custom Fields. Thumbnails werden bedarfsgerecht und mit derselben Rechteprüfung wie Dokumentdateien geladen; bei fehlenden Bildern erscheint ein Platzhalter. Die aktuelle Dokumentversion wird angezeigt.
 - Vorschau mit PDF.js, Seitenwahl und Zoom, sofern Paperless eine PDF-Vorschau liefert. Andere Dateien lassen sich mit aktivierter Download-Freigabe herunterladen. Bild-, HTML- oder Office-Dateien werden nicht aktiv in der App gerendert.
 
-Die API filtert bereits in Paperless vor Trefferzählung und Pagination. Bei Gastzugängen werden Auswahlvorschläge ebenfalls mit dem Freigabeprofil geprüft; bei sehr vielen Korrespondenten oder Auswahloptionen kann der erste Abruf deshalb länger dauern. OIDC-Benutzer sehen die über den technischen Token verfügbaren Filterkataloge ohne zusätzliche Objektberechtigungsprüfung. Ihre Dokumentergebnisse werden direkt in Paperless unter ihrer eigenen Identität gefiltert, gezählt und paginiert, auch bei großen Archiven. Dokumente werden nicht indexiert oder dauerhaft lokal zwischengespeichert.
+Die API filtert bereits in Paperless vor Trefferzählung und Pagination. Bei Gastzugängen werden Auswahlvorschläge ebenfalls mit dem Freigabeprofil geprüft. Diese Prüfungen laufen mit maximal sechs gleichzeitigen Paperless-Anfragen; der erste Abruf kann bei großen Katalogen länger dauern. Metadatenkataloge und Gäste-Auswahllisten werden standardmäßig bis zu fünf Minuten im Arbeitsspeicher zwischengespeichert. Gleichzeitige identische Abrufe teilen einen Ladevorgang. Der Gäste-Cache umfasst höchstens 128 Einträge und läuft spätestens mit seinem Katalog ab. Änderungen an Paperless-Katalogen und Auswahlvorschlägen können entsprechend verzögert sichtbar werden; abgelaufene Daten werden bei Upstream-Fehlern nicht weiterverwendet. Lokale Sperren, Profiländerungen und Downloadfreigaben sowie OIDC-Kontoprüfungen und Dokumentabfragen werden weiterhin bei jeder Anfrage berücksichtigt. `PAPERLESS_CACHE_TTL_SECONDS=0` deaktiviert beide Caches. Ein Neustart leert die Caches. OIDC-Benutzer sehen die über den technischen Token verfügbaren Filterkataloge ohne zusätzliche Objektberechtigungsprüfung. Ihre Dokumentergebnisse werden direkt in Paperless unter ihrer eigenen Identität gefiltert, gezählt und paginiert, auch bei großen Archiven. Dokumente werden nicht indexiert oder dauerhaft lokal zwischengespeichert.
 
 ## Entwicklung und Tests
 
@@ -253,24 +254,24 @@ Die automatisierten Vertragstests basieren auf der v3-Filterstruktur und decken 
 
 Die eigene API liegt unter `/api`. Die OpenAPI-Beschreibung unter `/api/openapi.json` ist nach Admin-Anmeldung verfügbar. Wesentliche Endpunkte:
 
-| Methode | Pfad | Zweck |
-| --- | --- | --- |
-| GET | `/api/auth/session` | Sitzung, CSRF-Token, `has_access` und optionaler `access_error`; erzeugt bei Bedarf eine anonyme Sitzung. |
-| POST | `/api/auth/code`, `/api/auth/logout` | Anmeldung beziehungsweise Abmeldung. |
-| GET | `/api/auth/oidc/login`, `/api/auth/oidc/callback` | OIDC-Anmeldung. |
-| GET | `/api/filters` | Zulässige Filterdefinitionen und Auswahlvorschläge einschließlich `document_types`. |
-| POST | `/api/documents/search` | Typisierte Suche mit Pagination und optionaler `document_type`-ID; Custom Fields nur aktiviert und exakt. |
-| GET | `/api/admin/filters` | Vollständiger Feldkatalog für die Verwaltung. |
-| GET/PUT | `/api/admin/search-settings` | Sichtbare Custom-Field-Suchfelder lesen/konfigurieren. |
-| GET | `/api/documents/{id}` | Geprüfte Dokumentdetails. |
-| GET | `/api/documents/{id}/preview`, `/api/documents/{id}/download` | Geprüfter Datei-Stream mit Range-Unterstützung. |
-| GET | `/api/documents/{id}/thumb` | Geschütztes Thumbnail (WebP, PNG oder JPEG), ohne persistenten Browsercache. |
-| GET/POST/PUT/DELETE | `/api/admin/profiles` bzw. `/{id}` | Profile verwalten; verwendete Profile können nicht gelöscht werden. |
-| GET/PUT | `/api/admin/users` bzw. `/{id}` | Paperless-Zuordnung (`verified_email`, `paperless_user_id`, `paperless_link_error`) lesen; `active`, `is_admin` und `allow_download` ändern. Kein `profile_id`. Ohne `allow_download` bleibt dessen Einstellung erhalten. |
-| GET/POST | `/api/admin/codes` | Codes auflisten oder erstellen; `allow_download` ist standardmäßig `false`. |
-| PATCH | `/api/admin/codes/{id}` | Download-Freigabe über `allow_download` ändern (nur Admin). |
-| POST | `/api/admin/codes/{id}/revoke` | Code widerrufen. |
-| GET | `/health` | Lokaler Prozess- und Datenbankcheck, ohne Paperless-Abhängigkeit. |
+| Methode             | Pfad                                                          | Zweck                                                                                                                                                                                                                     |
+| ------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET                 | `/api/auth/session`                                           | Sitzung, CSRF-Token, `has_access` und optionaler `access_error`; erzeugt bei Bedarf eine anonyme Sitzung.                                                                                                                 |
+| POST                | `/api/auth/code`, `/api/auth/logout`                          | Anmeldung beziehungsweise Abmeldung.                                                                                                                                                                                      |
+| GET                 | `/api/auth/oidc/login`, `/api/auth/oidc/callback`             | OIDC-Anmeldung.                                                                                                                                                                                                           |
+| GET                 | `/api/filters`                                                | Zulässige Filterdefinitionen und Auswahlvorschläge einschließlich `document_types`.                                                                                                                                       |
+| POST                | `/api/documents/search`                                       | Typisierte Suche mit Pagination und optionaler `document_type`-ID; Custom Fields nur aktiviert und exakt.                                                                                                                 |
+| GET                 | `/api/admin/filters`                                          | Vollständiger Feldkatalog für die Verwaltung.                                                                                                                                                                             |
+| GET/PUT             | `/api/admin/search-settings`                                  | Sichtbare Custom-Field-Suchfelder lesen/konfigurieren.                                                                                                                                                                    |
+| GET                 | `/api/documents/{id}`                                         | Geprüfte Dokumentdetails.                                                                                                                                                                                                 |
+| GET                 | `/api/documents/{id}/preview`, `/api/documents/{id}/download` | Geprüfter Datei-Stream mit Range-Unterstützung.                                                                                                                                                                           |
+| GET                 | `/api/documents/{id}/thumb`                                   | Geschütztes Thumbnail (WebP, PNG oder JPEG), ohne persistenten Browsercache.                                                                                                                                              |
+| GET/POST/PUT/DELETE | `/api/admin/profiles` bzw. `/{id}`                            | Profile verwalten; verwendete Profile können nicht gelöscht werden.                                                                                                                                                       |
+| GET/PUT             | `/api/admin/users` bzw. `/{id}`                               | Paperless-Zuordnung (`verified_email`, `paperless_user_id`, `paperless_link_error`) lesen; `active`, `is_admin` und `allow_download` ändern. Kein `profile_id`. Ohne `allow_download` bleibt dessen Einstellung erhalten. |
+| GET/POST            | `/api/admin/codes`                                            | Codes auflisten oder erstellen; `allow_download` ist standardmäßig `false`.                                                                                                                                               |
+| PATCH               | `/api/admin/codes/{id}`                                       | Download-Freigabe über `allow_download` ändern (nur Admin).                                                                                                                                                               |
+| POST                | `/api/admin/codes/{id}/revoke`                                | Code widerrufen.                                                                                                                                                                                                          |
+| GET                 | `/health`                                                     | Lokaler Prozess- und Datenbankcheck, ohne Paperless-Abhängigkeit.                                                                                                                                                         |
 
 Zustandsändernde Requests einschließlich Such-POSTs benötigen das Sitzungs-Cookie und `X-CSRF-Token`. Nicht deklarierte Eingabefelder werden abgelehnt. Es gibt keinen allgemeinen Paperless-Proxy und keine schreibenden Dokumentendpunkte.
 

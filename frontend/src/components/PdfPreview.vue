@@ -25,6 +25,7 @@ let observer: ResizeObserver | undefined,
   resizeTimer: ReturnType<typeof setTimeout> | undefined;
 let active = true,
   generation = 0;
+let observedWidth = 0;
 async function render() {
   if (!pdf || !canvas.value || !container.value) return;
   const version = ++generation;
@@ -83,7 +84,11 @@ onMounted(async () => {
     loading.value = false;
     await nextTick();
     await render();
+    observedWidth = container.value?.clientWidth ?? 0;
     observer = new ResizeObserver(() => {
+      const width = container.value?.clientWidth ?? 0;
+      if (!active || width === observedWidth) return;
+      observedWidth = width;
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => void render(), 150);
     });

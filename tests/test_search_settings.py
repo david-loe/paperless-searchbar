@@ -78,6 +78,8 @@ def test_exact_search_and_disabled_fields(env):
 
 def test_fresh_install_and_deleted_search_field(env):
     app, client, fake = env
+    clock = [0]
+    app.state.paperless.catalog_cache.clock = lambda: clock[0]
     with app.state.db() as db:
         db.delete(db.get(SearchConfiguration, 1))
         db.commit()
@@ -87,6 +89,8 @@ def test_fresh_install_and_deleted_search_field(env):
         client.put("/api/admin/search-settings", json={"custom_field_ids": [5]}).status_code == 200
     )
     fake.catalog["custom_fields"] = [f for f in fake.catalog["custom_fields"] if f["id"] != 5]
+    assert client.get("/api/filters").json()["custom_fields"][0]["id"] == 5
+    clock[0] = 300
     assert client.get("/api/filters").json()["custom_fields"] == []
     response = client.post(
         "/api/documents/search", json={"custom_fields": [{"field": 5, "value": "a"}]}

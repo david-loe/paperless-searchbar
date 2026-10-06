@@ -253,9 +253,10 @@ class FakePaperless:
             docs.sort(key=lambda d: d["id"], reverse=True)
             size = int(request.url.params.get("page_size", 25))
             start = (int(request.url.params.get("page", 1)) - 1) * size
-            return httpx.Response(
-                200, json={"count": len(docs), "next": None, "results": docs[start : start + size]}
-            )
+            results = docs[start : start + size]
+            if request.url.params.get("fields") == "id":
+                results = [{"id": doc["id"]} for doc in results]
+            return httpx.Response(200, json={"count": len(docs), "next": None, "results": results})
         if resource.endswith("/thumb"):
             return httpx.Response(
                 self.thumbnail_status,

@@ -1,3 +1,4 @@
+import json
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -49,7 +50,7 @@ def create_app(settings=None):
     @asynccontextmanager
     async def lifespan(app):
         yield
-        await paperless.http.aclose()
+        await paperless.close()
         engine.dispose()
 
     app = FastAPI(
@@ -294,48 +295,57 @@ def create_app(settings=None):
         ]
         # Keep the complete catalog for permission rules, including hidden search fields.
         permission_catalogs = {**catalogs, "custom_fields": list(fields_by_id.values())}
-        if not p.is_admin and not p.is_oidc:
+        if p.is_admin or p.is_oidc:
+            return present_catalog(catalogs, exact_only=True)
+        key = (
+            p.profile_id,
+            json.dumps(rules.model_dump(), sort_keys=True),
+            tuple(f["id"] for f in catalogs["custom_fields"]),
+            catalogs["_generation"],
+        )
+
+        async def load():
             # Probe candidates through the same permission query; no unscoped facets.
-            for key, attr in (
+            for kind, attr in (
                 ("storage_paths", "storage_path"),
                 ("correspondents", "correspondent"),
                 ("document_types", "document_type"),
             ):
-                visible = []
-                for obj in catalogs[key]:
-                    result = await paperless.search(
-                        Search(**{attr: obj["id"], "page_size": 1}), rules, permission_catalogs
-                    )
-                    if result["count"]:
-                        visible.append(obj)
-                catalogs[key] = visible
-            fields = []
-            for field in catalogs["custom_fields"]:
-                if not operators(field["data_type"]):
-                    continue
-                query = Search(
-                    custom_fields=[{"field": field["id"], "op": "exists", "value": True}],
-                    page_size=1,
+                catalogs[kind] = await paperless.visible_choices(
+                    catalogs[kind],
+                    lambda obj, attr=attr: Search(**{attr: obj["id"]}),
+                    rules,
+                    permission_catalogs,
                 )
-                if (await paperless.search(query, rules, permission_catalogs))["count"]:
-                    visible_field = dict(field)
-                    if field["data_type"] == "select":
-                        options = []
-                        for option in (field.get("extra_data") or {}).get("select_options", []):
-                            choice_query = Search(
-                                custom_fields=[
-                                    {"field": field["id"], "op": "exact", "value": option["id"]}
-                                ],
-                                page_size=1,
-                            )
-                            if (await paperless.search(choice_query, rules, permission_catalogs))[
-                                "count"
-                            ]:
-                                options.append(option)
-                        visible_field["extra_data"] = {"select_options": options}
-                    fields.append(visible_field)
-            catalogs["custom_fields"] = fields
-        return present_catalog(catalogs, exact_only=True)
+            fields = await paperless.visible_choices(
+                [f for f in catalogs["custom_fields"] if operators(f["data_type"])],
+                lambda field: Search(
+                    custom_fields=[{"field": field["id"], "op": "exists", "value": True}]
+                ),
+                rules,
+                permission_catalogs,
+            )
+            visible_fields = []
+            for field in fields:
+                if field["data_type"] == "select":
+                    options = await paperless.visible_choices(
+                        (field.get("extra_data") or {}).get("select_options", []),
+                        lambda option, field=field: Search(
+                            custom_fields=[
+                                {"field": field["id"], "op": "exact", "value": option["id"]}
+                            ]
+                        ),
+                        rules,
+                        permission_catalogs,
+                    )
+                    # Do not mutate the full catalog used by permission queries.
+                    field = {**field, "extra_data": {"select_options": options}}
+                visible_fields.append(field)
+            catalogs["custom_fields"] = visible_fields
+            return present_catalog(catalogs, exact_only=True)
+
+        entry = await paperless.filter_cache.get(key, load, expires_at=catalogs["_expires_at"])
+        return entry.value
 
     def present_catalog(catalogs, exact_only=False):
         return {
@@ -371,12 +381,17 @@ def create_app(settings=None):
         client, rules, catalogs = ctx
         return await client.search(body, rules, catalogs)
 
-    async def authorized_document(identity, ctx):
+    async def authorized_document(identity, ctx, *, existence_only=False):
         if identity < 1:
             raise HTTPException(404, "Dokument nicht gefunden.")
         client, rules, catalogs = ctx
         try:
-            result = await client.search(Search(document_id=identity, page_size=1), rules, catalogs)
+            query = Search(document_id=identity, page_size=1)
+            if existence_only:
+                if not await client.exists(query, rules, catalogs):
+                    raise HTTPException(404, "Dokument nicht gefunden.")
+                return
+            result = await client.search(query, rules, catalogs)
         except HTTPException as exc:
             if client.username is not None and exc.status_code in (403, 404):
                 raise HTTPException(404, "Dokument nicht gefunden.") from exc
@@ -399,7 +414,7 @@ def create_app(settings=None):
     ):
         if kind not in {"preview", "download", "thumb"}:
             raise HTTPException(404)
-        await authorized_document(identity, ctx)
+        await authorized_document(identity, ctx, existence_only=True)
         client = ctx[0]
         if kind == "download" and not p.allow_download:
             raise HTTPException(403, "Downloads sind für diesen Zugang nicht freigegeben.")
@@ -609,10 +624,25 @@ def create_app(settings=None):
 
     static = Path(settings.static_dir).resolve()
     if (static / "assets").is_dir():
-        app.mount("/assets", StaticFiles(directory=static / "assets"), name="assets")
+
+        class ImmutableAssets(StaticFiles):
+            async def get_response(self, path, scope):
+                response = await super().get_response(path, scope)
+                if response.status_code in (200, 304):
+                    response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+                return response
+
+        app.mount("/assets", ImmutableAssets(directory=static / "assets"), name="assets")
 
     if (static / "pdfjs").is_dir():
-        app.mount("/pdfjs", StaticFiles(directory=static / "pdfjs"), name="pdfjs")
+
+        class RevalidatedAssets(StaticFiles):
+            async def get_response(self, path, scope):
+                response = await super().get_response(path, scope)
+                response.headers["Cache-Control"] = "no-cache"
+                return response
+
+        app.mount("/pdfjs", RevalidatedAssets(directory=static / "pdfjs"), name="pdfjs")
 
     @app.get("/{path:path}", include_in_schema=False)
     def spa(path: str):
