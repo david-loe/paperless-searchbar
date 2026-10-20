@@ -7,7 +7,7 @@ COPY frontend/ ./
 RUN npm run build
 
 FROM ghcr.io/astral-sh/uv:0.12.23 AS uv
-FROM python:3.14-slim-bookworm AS runtime
+FROM python:3.15-slim-bookworm AS runtime
 COPY --from=uv /uv /usr/local/bin/uv
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 UV_COMPILE_BYTECODE=1 \
     PATH="/app/.venv/bin:$PATH" STATIC_DIR=/app/frontend/dist DATABASE_URL=sqlite:////data/searchbar.db
